@@ -1,43 +1,46 @@
-# ya-plan-console
+# ya-plan-console (monorepo)
 
-Public stub repo hosting the browser-side dashboard for [ya-plan](https://github.com/YoAm/ya-plan) (private).
+Two sibling PWAs plus shared infrastructure, deployed from a single GitHub Pages site.
 
-## What it is
+```
+/              → landing router (this README & index.html)
+/infra/        → domain-blind shared modules (gh-api, auth, telemetry, …)
+/console/      → ya-plan console PWA — infrastructure operations
+/viewer/       → ya-plan viewer PWA — plan dashboard (pending AR-027)
+```
 
-Static HTML + vanilla JS. Opens in any browser. Reads `ya-plan` state via GitHub's
-Contents REST API using a PAT stored in the browser's localStorage.
+## Deploy URLs
 
-No build step. No framework. No npm. Deliberately simple.
+- `https://yoam.github.io/ya-plan-console/` → router (two buttons)
+- `https://yoam.github.io/ya-plan-console/console/` → console PWA
+- `https://yoam.github.io/ya-plan-console/viewer/` → viewer PWA (404 until AR-027 lands)
 
-## What's here (v1, read-only)
+## Boundary rule (§P4.14 domain-swap test)
 
-- Plan KPIs (P50, P5, P(fail), FLOOR) from `ya-plan/report_data_v110.json`
-- Open HIGH items from `ya-plan/SSOT.md` §11
-- Recent commits from `ya-plan/main`
-- Recent ENRPs from `ya-plan/enrps/`
-- Pending events from `ya-plan/events/`
+Files under `infra/` are **domain-blind**: no hardcoded repo names, no user
+identity, no storage keys, no Hebrew, no plan-specific terms. Every
+plan-touching value (repo owner/name, storage key, author, paths) is passed
+by the consumer as an argument. An `infra/*.js` module must work identically
+if dropped into a film-production planning PWA with a different config.
 
-## Roadmap (v2+)
+Files under `console/` and (future) `viewer/` are **application tier**:
+plan-specific constants live in each app's local `config.js`. Each app
+imports infra modules via relative paths (`../infra/…`).
 
-- Event composition UI (forms → commits to `ya-plan/events/`)
-- WebAuthn/biometric PAT encryption (Android fingerprint unlock)
-- Offline-first via IndexedDB cache
-- Cross-substrate paste-bridge (optional — fires Claude.ai prompt, commits response)
+## Migration path (future)
 
-## Deployment
+Each subdirectory can split into its own repo via:
 
-GitHub Pages from `main`. Visit `https://<owner>.github.io/ya-plan-console/`.
+```
+git subtree split --prefix=infra   -b infra-repo
+git subtree split --prefix=console -b console-repo
+git subtree split --prefix=viewer  -b viewer-repo
+```
 
-## Auth model (v1)
+Three commits, same history preserved per subdir. No rewrite.
 
-User pastes a GitHub PAT scoped to `ya-plan` with Contents R/W + Metadata R.
-PAT is stored in browser localStorage. Single-user, single-device.
+## History
 
-Better options (v2):
-- Encrypted at rest via WebCrypto (passphrase-derived key)
-- WebAuthn-wrapped key (device biometric)
-- Ephemeral session-only (paste each time)
-
-## License
-
-Private use only. Not a general-purpose tool.
+- v2.0 (2026-04-19, AR-025) — monorepo restructure with infra/console/viewer split
+- v1.7 (2026-04-19) — event composition in `events-compose.js`
+- v1.6 → v1.0 — debug, telemetry, health, inbox, base console

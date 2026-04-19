@@ -1,9 +1,23 @@
-// ya-plan console service worker v3
-// Caches app shell for offline use. Auto-updates: new SW takes over on first
-// fetch after deploy; posts "update-ready" message so app can reload itself.
+// ya-plan console service worker v8 (AR-025 monorepo restructure)
+// Caches console/ shell. Infra modules at ../infra/ are outside this SW's
+// scope, so they rely on browser HTTP cache — acceptable trade-off (first
+// offline load requires prior network visit that primed the HTTP cache).
+// Auto-updates: new SW takes over on first fetch after deploy; posts
+// "sw-updated" message so app can reload itself.
 
-const CACHE = 'yp-console-v7';
-const SHELL = ['./', './index.html', './app.js', './telemetry.js', './debug.js', './inbox.js', './health.js', './events-compose.js', './manifest.json'];
+const CACHE = 'yp-console-v8';
+const SHELL = [
+  './',
+  './index.html',
+  './app.js',
+  './config.js',
+  './events-compose.js',
+  './telemetry.js',
+  './debug.js',
+  './inbox.js',
+  './health.js',
+  './manifest.json',
+];
 
 self.addEventListener('install', (e) => {
   // New SW version takes over immediately instead of waiting for all tabs to close

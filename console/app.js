@@ -1,13 +1,17 @@
-// ya-plan console v1 — read-only dashboard
-// Fetches state from github.com/YoAm/ya-plan via Contents REST API
-// v2 will add: event composition, WebAuthn PAT encryption, Service Worker
+// ya-plan console v2 — refactored for monorepo (AR-025)
+// Dashboard app consuming generic infra modules via window.ghApi and window.auth.
+// Plan-specific constants live in ./config.js (window.consoleConfig).
 
-const REPO = { owner: 'YoAm', name: 'ya-plan', branch: 'main' };
-const PAT_KEY = 'yp_pat_v1';
+const CFG = window.consoleConfig;  // { REPO, STORAGE_KEY, EVENTS_PATH, ... }
 
 let pat = null;
 
 const $ = (id) => document.getElementById(id);
+
+// Build the repo args object every infra call needs. pat fills in at call time.
+function repoArgs() {
+  return { pat, owner: CFG.REPO.owner, name: CFG.REPO.name, branch: CFG.REPO.branch };
+}
 
 // HTML escape — applied to ALL content fetched from GitHub before rendering.
 // Prevents XSS if SSOT descriptions, commit messages, or filenames contain HTML.
@@ -31,8 +35,8 @@ function safeUrl(u) {
 
 // ═══ Auth ═══════════════════════════════════════════════════════════
 
-function loadPat() {
-  pat = localStorage.getItem(PAT_KEY);
+function loadPatFromStorage() {
+  pat = window.auth.loadPat({ storageKey: CFG.STORAGE_KEY });
   if (pat) {
     $('authBox').style.display = 'none';
     ['kpisCard', 'openItemsCard', 'commitsCard', 'enrpsCard', 'eventsCard', 'telemetryCard', 'healthCard']
@@ -41,112 +45,63 @@ function loadPat() {
     $('logoutBtn').style.display = '';
     // Start auto-flushing telemetry on every page load with a PAT
     window.telemetry?.startAutoFlush(() => pat);
-    window.telemetry?.log('session.start', { v: document.getElementById('version')?.textContent });
+    window.telemetry?.log('session.start', { v: $('version')?.textContent });
     // Start inbox polling for PM→PWA messages
     window.inbox?.startPolling(() => pat);
     // Render event composition buttons
-    if (window.eventsCompose && document.getElementById('eventButtons')) {
-      window.eventsCompose.renderEventButtons(document.getElementById('eventButtons'), () => pat);
+    if (window.eventsCompose && $('eventButtons')) {
+      window.eventsCompose.renderEventButtons($('eventButtons'), () => pat);
     }
     refresh();
   }
 }
 
-async function saveAuth() {
+async function handleConnect() {
   const val = $('patInput').value.trim();
   if (!val) { alert('Paste your PAT first.'); return; }
 
-  // Preflight: verify PAT works against ya-plan before storing
   renderStatus('validating PAT…');
   const t0 = performance.now();
   try {
-    const r = await fetch(
-      `https://api.github.com/repos/${REPO.owner}/${REPO.name}`,
-      { headers: { 'Authorization': `Bearer ${val}`, 'Accept': 'application/vnd.github+json' } }
-    );
-    if (!r.ok) {
-      const body = await r.text();
-      window.telemetry?.log('saveAuth.rejected', {
-        status: r.status,
-        ms: Math.round(performance.now() - t0),
-        bodyPreview: body.slice(0, 200),
-      });
-      renderStatus(`PAT rejected: HTTP ${r.status}`);
-      alert(`PAT validation failed.\n\nHTTP ${r.status}\n${body.slice(0, 400)}\n\nCheck: (1) PAT has ${REPO.owner}/${REPO.name} access (2) PAT has Contents R/W permission (3) PAT not expired.`);
-      return;
-    }
-    const info = await r.json();
-    if (info.full_name !== `${REPO.owner}/${REPO.name}`) {
-      window.telemetry?.log('saveAuth.wrong_repo', { got: info.full_name });
-      alert(`Unexpected response: got ${info.full_name}, expected ${REPO.owner}/${REPO.name}`);
-      return;
-    }
-  } catch (e) {
-    window.telemetry?.log('saveAuth.network_error', {
-      errName: e.name,
-      errMsg: String(e.message).slice(0, 200),
-      ms: Math.round(performance.now() - t0),
+    await window.auth.saveAuth(val, {
+      storageKey: CFG.STORAGE_KEY,
+      expectedRepo: { owner: CFG.REPO.owner, name: CFG.REPO.name },
     });
-    renderStatus(`network error: ${e.message}`);
-    alert(`Could not reach api.github.com.\n\n${e.name}: ${e.message}\n\nCheck: phone has internet, no VPN/firewall blocking github.com.`);
-    return;
+    pat = val;
+    $('patInput').value = '';
+    window.telemetry?.log('saveAuth.ok', { ms: Math.round(performance.now() - t0) });
+    window.telemetry?.startAutoFlush(() => pat);
+    window.telemetry?.flush(() => pat).catch(() => {});
+    loadPatFromStorage();
+  } catch (e) {
+    if (e.httpStatus) {
+      window.telemetry?.log('saveAuth.rejected', {
+        status: e.httpStatus,
+        ms: Math.round(performance.now() - t0),
+        bodyPreview: (e.body || '').slice(0, 200),
+      });
+      renderStatus(`PAT rejected: HTTP ${e.httpStatus}`);
+      alert(`PAT validation failed.\n\nHTTP ${e.httpStatus}\n${(e.body || '').slice(0, 400)}\n\nCheck: (1) PAT has ${CFG.REPO.owner}/${CFG.REPO.name} access (2) PAT has Contents R/W permission (3) PAT not expired.`);
+    } else if (e.wrongRepo) {
+      window.telemetry?.log('saveAuth.wrong_repo', { got: e.got });
+      alert(`Unexpected response: got ${e.got}, expected ${CFG.REPO.owner}/${CFG.REPO.name}`);
+    } else {
+      window.telemetry?.log('saveAuth.network_error', {
+        errName: e.name,
+        errMsg: String(e.message).slice(0, 200),
+        ms: Math.round(performance.now() - t0),
+      });
+      renderStatus(`network error: ${e.message}`);
+      alert(`Could not reach api.github.com.\n\n${e.name}: ${e.message}\n\nCheck: phone has internet, no VPN/firewall blocking github.com.`);
+    }
   }
-
-  localStorage.setItem(PAT_KEY, val);
-  pat = val;
-  $('patInput').value = '';
-  window.telemetry?.log('saveAuth.ok', { ms: Math.round(performance.now() - t0) });
-  // Start auto-flushing telemetry to git now that we have a PAT
-  window.telemetry?.startAutoFlush(() => pat);
-  // Immediate flush so first-session events persist
-  window.telemetry?.flush(() => pat).catch(() => {});
-  loadPat();
 }
 
 function logout() {
   if (!confirm('Clear PAT from this browser?')) return;
-  localStorage.removeItem(PAT_KEY);
+  window.auth.logout({ storageKey: CFG.STORAGE_KEY });
   pat = null;
   location.reload();
-}
-
-// ═══ GitHub API wrapper ═════════════════════════════════════════════
-
-async function ghRaw(path) {
-  // Fetch file content via Contents API (works for files up to 1MB; larger = use blobs)
-  const r = await fetch(
-    `https://api.github.com/repos/${REPO.owner}/${REPO.name}/contents/${path}?ref=${REPO.branch}`,
-    { headers: { 'Authorization': `Bearer ${pat}`, 'Accept': 'application/vnd.github+json' } }
-  );
-  if (!r.ok) throw new Error(`GitHub ${r.status} for ${path}: ${await r.text()}`);
-  const data = await r.json();
-  if (data.encoding !== 'base64') throw new Error(`Unexpected encoding: ${data.encoding}`);
-  // Decode base64 → UTF-8 (handles Hebrew correctly)
-  const bytes = Uint8Array.from(atob(data.content.replace(/\n/g, '')), c => c.charCodeAt(0));
-  return new TextDecoder('utf-8').decode(bytes);
-}
-
-async function ghJson(path) {
-  const txt = await ghRaw(path);
-  return JSON.parse(txt);
-}
-
-async function ghDir(path) {
-  const r = await fetch(
-    `https://api.github.com/repos/${REPO.owner}/${REPO.name}/contents/${path}?ref=${REPO.branch}`,
-    { headers: { 'Authorization': `Bearer ${pat}`, 'Accept': 'application/vnd.github+json' } }
-  );
-  if (!r.ok) throw new Error(`GitHub ${r.status} for dir ${path}`);
-  return await r.json();
-}
-
-async function ghCommits(n = 5) {
-  const r = await fetch(
-    `https://api.github.com/repos/${REPO.owner}/${REPO.name}/commits?sha=${REPO.branch}&per_page=${n}`,
-    { headers: { 'Authorization': `Bearer ${pat}`, 'Accept': 'application/vnd.github+json' } }
-  );
-  if (!r.ok) throw new Error(`GitHub ${r.status} for commits`);
-  return await r.json();
 }
 
 // ═══ Parsers ════════════════════════════════════════════════════════
@@ -207,7 +162,7 @@ function renderError(cardBodyId, err) {
 
 async function loadKpis() {
   try {
-    const data = await ghJson('report_data_v110.json');
+    const data = await window.ghApi.ghJson('report_data_v110.json', repoArgs());
     const kpis = parseReportData(data);
     if (kpis.length === 0) {
       $('kpis').innerHTML = '<div class="kpi"><div class="kpi-label">No KPIs found in report_data_v110.json</div></div>';
@@ -227,7 +182,7 @@ async function loadKpis() {
 
 async function loadOpenItems() {
   try {
-    const ssot = await ghRaw('SSOT.md');
+    const ssot = await window.ghApi.ghRaw('SSOT.md', repoArgs());
     const items = parseSsotOpenItems(ssot);
     const high = items.filter(i => /HIGH/i.test(i.status));
     if (high.length === 0) {
@@ -250,7 +205,7 @@ async function loadOpenItems() {
 
 async function loadCommits() {
   try {
-    const commits = await ghCommits(8);
+    const commits = await window.ghApi.ghCommits(8, repoArgs());
     $('commits').innerHTML = commits.map(c => `
       <div class="commit">
         <span class="commit-sha">${esc(c.sha.slice(0, 7))}</span>
@@ -265,7 +220,7 @@ async function loadCommits() {
 
 async function loadEnrps() {
   try {
-    const entries = await ghDir('enrps');
+    const entries = await window.ghApi.ghDir('enrps', repoArgs());
     const md = entries.filter(e => e.name.endsWith('.md'));
     md.sort((a, b) => b.name.localeCompare(a.name)); // newest first by filename (timestamped)
     if (md.length === 0) {
@@ -287,7 +242,7 @@ async function loadEnrps() {
 
 async function loadEvents() {
   try {
-    const entries = await ghDir('events');
+    const entries = await window.ghApi.ghDir('events', repoArgs());
     const pending = entries.filter(e => e.name.endsWith('.md') && e.name !== '.gitkeep' && e.type === 'file');
     if (pending.length === 0) {
       $('events').innerHTML = '<li><span style="color:#6b7280">No pending events. Queue is empty.</span></li>';
@@ -307,7 +262,7 @@ async function loadEvents() {
 }
 
 async function refresh() {
-  renderStatus(`connecting to ${REPO.owner}/${REPO.name}…`);
+  renderStatus(`connecting to ${CFG.REPO.owner}/${CFG.REPO.name}…`);
   $('refreshBtn').disabled = true;
   const startedAt = Date.now();
   const results = await Promise.allSettled([loadKpis(), loadOpenItems(), loadCommits(), loadEnrps(), loadEvents()]);
@@ -324,7 +279,7 @@ async function refresh() {
   } else if (failed > 0) {
     renderStatus(`⚠ ${failed}/${results.length} fetches failed · ${elapsed}ms · ${new Date().toLocaleTimeString('en-IL')}`);
   } else {
-    renderStatus(`✓ ${REPO.owner}/${REPO.name}@${REPO.branch} · ${elapsed}ms · ${new Date().toLocaleTimeString('en-IL')}`);
+    renderStatus(`✓ ${CFG.REPO.owner}/${CFG.REPO.name}@${CFG.REPO.branch} · ${elapsed}ms · ${new Date().toLocaleTimeString('en-IL')}`);
   }
   $('refreshBtn').disabled = false;
 }
@@ -335,17 +290,17 @@ window.refresh = refresh;
 // ═══ Init ════════════════════════════════════════════════════════════
 
 // Wire all button handlers (inline onclick= is CSP-blocked by design)
-document.getElementById('connectBtn').addEventListener('click', saveAuth);
-document.getElementById('refreshBtn').addEventListener('click', refresh);
-document.getElementById('hardReloadBtn').addEventListener('click', hardReload);
-document.getElementById('logoutBtn').addEventListener('click', logout);
-document.getElementById('debugBtn').addEventListener('click', () => window.debugWithAI?.showDebugModal());
+$('connectBtn').addEventListener('click', handleConnect);
+$('refreshBtn').addEventListener('click', refresh);
+$('hardReloadBtn').addEventListener('click', hardReload);
+$('logoutBtn').addEventListener('click', logout);
+$('debugBtn').addEventListener('click', () => window.debugWithAI?.showDebugModal());
 
 // Health check button
-document.getElementById('runHealthBtn').addEventListener('click', async () => {
-  const btn = document.getElementById('runHealthBtn');
-  const meta = document.getElementById('healthMeta');
-  const container = document.getElementById('healthResults');
+$('runHealthBtn').addEventListener('click', async () => {
+  const btn = $('runHealthBtn');
+  const meta = $('healthMeta');
+  const container = $('healthResults');
   btn.disabled = true;
   btn.textContent = 'Running…';
   meta.textContent = '';
@@ -368,10 +323,10 @@ document.getElementById('runHealthBtn').addEventListener('click', async () => {
 });
 
 // Telemetry UI wiring
-const telemetryToggle = document.getElementById('telemetryToggle');
-const telemetryStatus = document.getElementById('telemetryStatus');
-const telemetrySessionIdEl = document.getElementById('telemetrySessionId');
-const telemetryFlushBtn = document.getElementById('telemetryFlushBtn');
+const telemetryToggle = $('telemetryToggle');
+const telemetryStatus = $('telemetryStatus');
+const telemetrySessionIdEl = $('telemetrySessionId');
+const telemetryFlushBtn = $('telemetryFlushBtn');
 
 if (window.telemetry) {
   telemetryToggle.checked = window.telemetry.isEnabled();
@@ -399,7 +354,7 @@ if (window.telemetry) {
   });
 }
 
-loadPat();
+loadPatFromStorage();
 
 // Register service worker for offline fallback (ignore errors gracefully)
 if ('serviceWorker' in navigator) {
