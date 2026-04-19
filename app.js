@@ -44,6 +44,10 @@ function loadPat() {
     window.telemetry?.log('session.start', { v: document.getElementById('version')?.textContent });
     // Start inbox polling for PM→PWA messages
     window.inbox?.startPolling(() => pat);
+    // Render event composition buttons
+    if (window.eventsCompose && document.getElementById('eventButtons')) {
+      window.eventsCompose.renderEventButtons(document.getElementById('eventButtons'), () => pat);
+    }
     refresh();
   }
 }
@@ -324,6 +328,9 @@ async function refresh() {
   }
   $('refreshBtn').disabled = false;
 }
+
+// Expose refresh globally so inbox.js and events-compose.js can trigger it
+window.refresh = refresh;
 
 // ═══ Init ════════════════════════════════════════════════════════════
 
