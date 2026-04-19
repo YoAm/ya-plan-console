@@ -166,13 +166,31 @@
       <div class="small">Buttons to record new events will appear here in v2.</div>
     </div>
 
+    <div class="card" id="telemetryCard" style="display:none">
+      <h2>Telemetry</h2>
+      <div style="display:flex;align-items:center;gap:12px;font-size:12px">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" id="telemetryToggle">
+          <span>Enabled</span>
+        </label>
+        <span id="telemetryStatus" class="kpi-sub"></span>
+        <button class="secondary" id="telemetryFlushBtn" style="padding:4px 10px;font-size:11px">Flush now</button>
+      </div>
+      <div class="small" style="margin-top:8px">
+        Session <span id="telemetrySessionId" style="font-family:ui-monospace,monospace"></span>.
+        Events buffer in your browser, commit to <code>ya-plan/telemetry/YYYY-MM-DD.jsonl</code> every 30s.
+        Scrubbed: PATs, tokens. Never logged: SSOT content, financial values.
+      </div>
+    </div>
+
     <div class="small" id="footer">
-      <span id="version">v1.3</span> ·
+      <span id="version">v1.4</span> ·
       <a href="https://github.com/YoAm/ya-plan" target="_blank">repo</a> ·
       <a href="https://github.com/YoAm/ya-plan/actions" target="_blank">Actions</a>
     </div>
   </main>
 
+  <script src="telemetry.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

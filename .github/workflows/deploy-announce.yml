@@ -1,0 +1,57 @@
+name: deploy-announce
+# Feedback loop: comment on the triggering commit after Pages deploys, so we
+# have visual confirmation the deploy reached production. Also adds a link.
+# Free-tier: standard ubuntu-latest runner, ~20s/run. Triggers only on push.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  issues: write   # for commit comments
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Wait for Pages deploy
+        run: |
+          # GitHub Pages typically deploys within 30-60s of a push. We wait a
+          # generous buffer before probing.
+          sleep 45
+
+      - name: Probe deployed URL
+        id: probe
+        run: |
+          URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/"
+          echo "Probing $URL"
+          CODE=$(curl -sS -o /tmp/deploy.html -w "%{http_code}" "$URL" || echo "000")
+          echo "http_code=$CODE" >> $GITHUB_OUTPUT
+          echo "url=$URL" >> $GITHUB_OUTPUT
+          if [ "$CODE" = "200" ]; then
+            VERSION=$(grep -oE 'id="version">[^<]+' /tmp/deploy.html | sed 's/id="version">//' | head -1)
+            echo "version=${VERSION:-unknown}" >> $GITHUB_OUTPUT
+          else
+            echo "version=HTTP_$CODE" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Comment on commit
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const url = '${{ steps.probe.outputs.url }}';
+            const code = '${{ steps.probe.outputs.http_code }}';
+            const version = '${{ steps.probe.outputs.version }}';
+            const emoji = code === '200' ? '✅' : '❌';
+            const body = `${emoji} Pages deploy for \`${context.sha.slice(0,7)}\`\n\n` +
+                         `- URL: ${url}\n` +
+                         `- HTTP: ${code}\n` +
+                         `- Version on page: \`${version}\``;
+            await github.rest.repos.createCommitComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: context.sha,
+              body: body,
+            });

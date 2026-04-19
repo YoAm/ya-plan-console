@@ -35,10 +35,13 @@ function loadPat() {
   pat = localStorage.getItem(PAT_KEY);
   if (pat) {
     $('authBox').style.display = 'none';
-    ['kpisCard', 'openItemsCard', 'commitsCard', 'enrpsCard', 'eventsCard']
+    ['kpisCard', 'openItemsCard', 'commitsCard', 'enrpsCard', 'eventsCard', 'telemetryCard']
       .forEach(id => $(id).style.display = '');
     $('refreshBtn').disabled = false;
     $('logoutBtn').style.display = '';
+    // Start auto-flushing telemetry on every page load with a PAT
+    window.telemetry?.startAutoFlush(() => pat);
+    window.telemetry?.log('session.start', { v: document.getElementById('version')?.textContent });
     refresh();
   }
 }
@@ -49,6 +52,7 @@ async function saveAuth() {
 
   // Preflight: verify PAT works against ya-plan before storing
   renderStatus('validating PAT…');
+  const t0 = performance.now();
   try {
     const r = await fetch(
       `https://api.github.com/repos/${REPO.owner}/${REPO.name}`,
@@ -56,16 +60,27 @@ async function saveAuth() {
     );
     if (!r.ok) {
       const body = await r.text();
+      window.telemetry?.log('saveAuth.rejected', {
+        status: r.status,
+        ms: Math.round(performance.now() - t0),
+        bodyPreview: body.slice(0, 200),
+      });
       renderStatus(`PAT rejected: HTTP ${r.status}`);
       alert(`PAT validation failed.\n\nHTTP ${r.status}\n${body.slice(0, 400)}\n\nCheck: (1) PAT has ${REPO.owner}/${REPO.name} access (2) PAT has Contents R/W permission (3) PAT not expired.`);
       return;
     }
     const info = await r.json();
     if (info.full_name !== `${REPO.owner}/${REPO.name}`) {
+      window.telemetry?.log('saveAuth.wrong_repo', { got: info.full_name });
       alert(`Unexpected response: got ${info.full_name}, expected ${REPO.owner}/${REPO.name}`);
       return;
     }
   } catch (e) {
+    window.telemetry?.log('saveAuth.network_error', {
+      errName: e.name,
+      errMsg: String(e.message).slice(0, 200),
+      ms: Math.round(performance.now() - t0),
+    });
     renderStatus(`network error: ${e.message}`);
     alert(`Could not reach api.github.com.\n\n${e.name}: ${e.message}\n\nCheck: phone has internet, no VPN/firewall blocking github.com.`);
     return;
@@ -74,6 +89,11 @@ async function saveAuth() {
   localStorage.setItem(PAT_KEY, val);
   pat = val;
   $('patInput').value = '';
+  window.telemetry?.log('saveAuth.ok', { ms: Math.round(performance.now() - t0) });
+  // Start auto-flushing telemetry to git now that we have a PAT
+  window.telemetry?.startAutoFlush(() => pat);
+  // Immediate flush so first-session events persist
+  window.telemetry?.flush(() => pat).catch(() => {});
   loadPat();
 }
 
@@ -287,6 +307,12 @@ async function refresh() {
   const results = await Promise.allSettled([loadKpis(), loadOpenItems(), loadCommits(), loadEnrps(), loadEvents()]);
   const elapsed = Date.now() - startedAt;
   const failed = results.filter(r => r.status === 'rejected').length;
+  window.telemetry?.log('refresh', {
+    ms: elapsed,
+    failed,
+    total: results.length,
+    results: results.map(r => r.status),
+  });
   if (failed === results.length) {
     renderStatus(`❌ all ${failed} fetches failed · check errors in cards`);
   } else if (failed > 0) {
@@ -304,6 +330,38 @@ document.getElementById('connectBtn').addEventListener('click', saveAuth);
 document.getElementById('refreshBtn').addEventListener('click', refresh);
 document.getElementById('hardReloadBtn').addEventListener('click', hardReload);
 document.getElementById('logoutBtn').addEventListener('click', logout);
+
+// Telemetry UI wiring
+const telemetryToggle = document.getElementById('telemetryToggle');
+const telemetryStatus = document.getElementById('telemetryStatus');
+const telemetrySessionIdEl = document.getElementById('telemetrySessionId');
+const telemetryFlushBtn = document.getElementById('telemetryFlushBtn');
+
+if (window.telemetry) {
+  telemetryToggle.checked = window.telemetry.isEnabled();
+  telemetrySessionIdEl.textContent = window.telemetry.sessionId();
+  telemetryStatus.textContent = window.telemetry.isEnabled() ? 'on' : 'off';
+  telemetryToggle.addEventListener('change', (e) => {
+    window.telemetry.setEnabled(e.target.checked);
+    telemetryStatus.textContent = e.target.checked ? 'on' : 'off';
+    if (!e.target.checked) window.telemetry.stopAutoFlush();
+    else if (pat) window.telemetry.startAutoFlush(() => pat);
+  });
+  telemetryFlushBtn.addEventListener('click', async () => {
+    if (!pat) { alert('Not connected.'); return; }
+    telemetryFlushBtn.disabled = true;
+    telemetryFlushBtn.textContent = 'Flushing…';
+    try {
+      const r = await window.telemetry.flush(() => pat);
+      telemetryStatus.textContent = `flushed: ${JSON.stringify(r)}`;
+    } catch (e) {
+      telemetryStatus.textContent = `flush error: ${e.message}`;
+    } finally {
+      telemetryFlushBtn.disabled = false;
+      telemetryFlushBtn.textContent = 'Flush now';
+    }
+  });
+}
 
 loadPat();
 
