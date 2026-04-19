@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- CSP: extends console's policy with api.anthropic.com for dispatch. -->
+<meta http-equiv="Content-Security-Policy" content="
+  default-src 'none';
+  script-src 'self';
+  style-src 'self' 'unsafe-inline';
+  img-src 'self' data:;
+  connect-src https://api.github.com https://api.anthropic.com;
+  manifest-src 'self';
+  base-uri 'none';
+  form-action 'none';
+  frame-ancestors 'none';
+">
+<title>ya-plan runner</title>
+<link rel="manifest" href="../manifest.json">
+<meta name="theme-color" content="#0b0d10">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    background: #0b0d10; color: #e8eaed;
+    font-size: 14px; line-height: 1.45;
+    min-height: 100vh; padding: 16px;
+    max-width: 720px; margin: 0 auto;
+  }
+  header {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding-bottom: 10px; border-bottom: 1px solid #2a2e36;
+    margin-bottom: 16px;
+  }
+  header h1 { font-size: 16px; font-weight: 600; color: #fff; }
+  header .v { font: 11px ui-monospace, monospace; color: #5a5f68; }
+
+  .card {
+    background: #14171c; border: 1px solid #2a2e36;
+    border-radius: 8px; padding: 12px; margin-bottom: 12px;
+  }
+  .card h2 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: #8a8f98; margin-bottom: 8px; font-weight: 600;
+  }
+
+  .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  .row:last-child { margin-bottom: 0; }
+
+  .badge {
+    padding: 3px 8px; border-radius: 4px; font: 10px ui-monospace, monospace;
+    font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .badge-off, .badge-stopped { background: #2a2e36; color: #8a8f98; }
+  .badge-idle { background: rgba(100,181,246,0.15); color: #64b5f6; }
+  .badge-polling { background: rgba(100,181,246,0.2); color: #90caf9; }
+  .badge-fetching_files { background: rgba(255,183,77,0.15); color: #ffb74d; }
+  .badge-dispatching { background: rgba(255,183,77,0.2); color: #ffca28; }
+  .badge-committing { background: rgba(129,199,132,0.2); color: #81c784; }
+
+  button {
+    background: #1a1d23; color: #e8eaed; border: 1px solid #2a2e36;
+    border-radius: 4px; padding: 6px 12px; font: 12px inherit;
+    cursor: pointer; font-family: inherit;
+  }
+  button:hover { border-color: #81c784; color: #81c784; }
+  button.primary { background: rgba(129,199,132,0.15); border-color: #81c784; color: #81c784; }
+  button.danger { background: rgba(255,138,128,0.1); border-color: #ff8a80; color: #ff8a80; }
+
+  .small, .mono { font: 11px ui-monospace, monospace; color: #8a8f98; }
+  .ok { color: #81c784; }
+  .err { color: #ff8a80; }
+  .warn { color: #ffb74d; }
+
+  .job-entry {
+    padding: 6px 0; border-bottom: 1px solid #2a2e36;
+    display: grid; grid-template-columns: auto auto 1fr;
+    gap: 8px; align-items: center; font-size: 12px;
+  }
+  .job-entry:last-child { border: none; }
+  .job-ruling { font: 11px ui-monospace, monospace; color: #81c784; font-weight: 600; }
+  .job-state { font: 9px ui-monospace, monospace; text-transform: uppercase; }
+  .job-in-flight .job-state { color: #ffb74d; }
+  .job-done .job-state { color: #81c784; }
+  .job-failed .job-state { color: #ff8a80; }
+  .job-ts { text-align: right; font: 10px ui-monospace, monospace; color: #5a5f68; }
+  .job-detail { grid-column: 1 / -1; font: 10px ui-monospace, monospace; color: #5a5f68; }
+
+  .queue-entry {
+    padding: 4px 0; border-bottom: 1px solid #2a2e36;
+    display: flex; justify-content: space-between; font-size: 12px;
+  }
+  .queue-entry:last-child { border: none; }
+  .queue-name { font: 11px ui-monospace, monospace; color: #e8eaed; }
+  .queue-size { font: 10px ui-monospace, monospace; color: #5a5f68; }
+
+  a { color: #81c784; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  footer {
+    margin-top: 20px; padding-top: 12px; border-top: 1px solid #2a2e36;
+    font: 10px ui-monospace, monospace; color: #5a5f68; text-align: center;
+  }
+</style>
+</head>
+<body>
+  <header>
+    <h1>ya-plan runner</h1>
+    <div>
+      <div class="v" id="version">v1.0 · AR-028</div>
+      <div class="v" id="workerIdDisplay">…</div>
+    </div>
+  </header>
+
+  <div class="card">
+    <h2>Anthropic API Key</h2>
+    <div class="row">
+      <span id="keyStatus" class="small">…</span>
+    </div>
+    <div class="row">
+      <button id="setKeyBtn">Set API key</button>
+      <button id="clearKeyBtn" class="danger" style="display:none">Clear key</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Worker</h2>
+    <div class="row">
+      <span class="badge" id="workerStateBadge">OFF</span>
+      <span class="small" id="workerStateDetail">…</span>
+    </div>
+    <div class="row">
+      <button id="startBtn" class="primary">Start worker</button>
+      <button id="stopBtn" style="display:none" class="danger">Stop worker</button>
+    </div>
+    <div class="small" style="margin-top:6px">
+      Polls spawn-queue every 60s. Keeps tab open = worker alive.
+      Mobile browsers may throttle background tabs — keep this tab foreground for best response time.
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Pending queue</h2>
+    <div id="pendingQueue"><div class="small">…</div></div>
+    <div class="row" style="margin-top:8px">
+      <button id="refreshQueueBtn">↻ Refresh</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Recent jobs (this session)</h2>
+    <div id="recentJobs"><div class="small">no jobs yet</div></div>
+  </div>
+
+  <footer>
+    <a href="../">← console</a> ·
+    <a href="../../">router</a> ·
+    <a href="https://github.com/YoAm/ya-plan/tree/main/spawn-queue" target="_blank" rel="noopener">queue on GitHub</a>
+  </footer>
+
+  <!-- Infra modules (domain-blind) -->
+  <script src="../../infra/gh-api.js"></script>
+  <script src="../../infra/auth.js"></script>
+  <script src="../../infra/anthropic-api.js"></script>
+  <script src="../../infra/runner-core.js"></script>
+  <script src="../../infra/queue-status.js"></script>
+  <script src="../../infra/queue-worker.js"></script>
+  <!-- Consumer wiring -->
+  <script src="../config.js"></script>
+  <script src="./config.js"></script>
+  <script src="./runner-ui.js"></script>
+  <script>
+    // Bootstrap: wait for DOM + init UI
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', () => window.runnerUi.init());
+    } else {
+      window.runnerUi.init();
+    }
+  </script>
+</body>
+</html>

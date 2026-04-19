@@ -1,11 +1,11 @@
-// ya-plan console service worker v8 (AR-025 monorepo restructure)
+// ya-plan console service worker v9 (AR-025 monorepo restructure)
 // Caches console/ shell. Infra modules at ../infra/ are outside this SW's
 // scope, so they rely on browser HTTP cache — acceptable trade-off (first
 // offline load requires prior network visit that primed the HTTP cache).
 // Auto-updates: new SW takes over on first fetch after deploy; posts
 // "sw-updated" message so app can reload itself.
 
-const CACHE = 'yp-console-v8';
+const CACHE = 'yp-console-v9';
 const SHELL = [
   './',
   './index.html',
@@ -17,6 +17,9 @@ const SHELL = [
   './inbox.js',
   './health.js',
   './manifest.json',
+  './runner/index.html',
+  './runner/config.js',
+  './runner/runner-ui.js',
 ];
 
 self.addEventListener('install', (e) => {
