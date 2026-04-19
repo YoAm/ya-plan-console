@@ -1,0 +1,3 @@
+# no build artifacts; this is static JS/HTML
+.DS_Store
+*.log

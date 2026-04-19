@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- CSP: only self-origin scripts + connect to GitHub API. No inline scripts allowed
+     from dynamic content. Defense in depth against XSS via innerHTML. -->
+<meta http-equiv="Content-Security-Policy" content="
+  default-src 'none';
+  script-src 'self';
+  style-src 'self' 'unsafe-inline';
+  img-src 'self' data:;
+  connect-src https://api.github.com;
+  manifest-src 'self';
+  base-uri 'none';
+  form-action 'none';
+  frame-ancestors 'none';
+">
+<title>ya-plan console</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1e3a8a">
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: system-ui, -apple-system, sans-serif;
+    margin: 0; padding: 0;
+    background: #f5f5f7;
+    color: #111;
+    font-size: 14px;
+    line-height: 1.45;
+  }
+  header {
+    background: #1e3a8a; color: white;
+    padding: 12px 16px;
+    position: sticky; top: 0; z-index: 10;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  header h1 { margin: 0; font-size: 15px; font-weight: 600; }
+  header .status {
+    font-size: 10px; opacity: 0.85; margin-top: 2px;
+    font-family: ui-monospace, monospace;
+  }
+  main { padding: 12px; max-width: 820px; margin: 0 auto; }
+  .card {
+    background: white; border: 1px solid #e5e7eb;
+    border-radius: 6px; padding: 12px; margin-bottom: 10px;
+  }
+  .card h2 {
+    margin: 0 0 8px 0; font-size: 13px; color: #374151;
+    font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .loading { color: #9ca3af; font-style: italic; font-size: 12px; }
+  .err { color: #b91c1c; font-size: 12px; font-family: ui-monospace, monospace; }
+
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .kpi {
+    background: #f9fafb; border-radius: 4px; padding: 8px;
+  }
+  .kpi-label { font-size: 10px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; }
+  .kpi-value { font-size: 17px; font-weight: 600; font-family: ui-monospace, monospace; margin-top: 2px; }
+  .kpi-sub { font-size: 10px; color: #9ca3af; }
+
+  ul.items { list-style: none; padding: 0; margin: 0; }
+  ul.items li {
+    padding: 6px 0; border-bottom: 1px solid #f3f4f6;
+    font-size: 12px; display: flex; justify-content: space-between; gap: 8px;
+  }
+  ul.items li:last-child { border-bottom: none; }
+  .pri {
+    padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600;
+    font-family: ui-monospace, monospace; flex-shrink: 0;
+  }
+  .pri-HIGH { background: #fee2e2; color: #991b1b; }
+  .pri-MED { background: #fef3c7; color: #92400e; }
+  .pri-LOW { background: #dbeafe; color: #1e40af; }
+  .pri-OPEN { background: #fce7f3; color: #9f1239; }
+
+  .commit {
+    font-family: ui-monospace, monospace; font-size: 11px;
+    padding: 4px 0; border-bottom: 1px solid #f3f4f6;
+  }
+  .commit-sha { color: #3b82f6; }
+  .commit:last-child { border-bottom: none; }
+
+  .auth-box {
+    background: #fffbeb; border: 1px solid #d97706;
+    padding: 10px; border-radius: 4px; margin-bottom: 10px;
+  }
+  input[type=password] {
+    width: 100%; padding: 8px; margin-top: 6px;
+    font-family: ui-monospace, monospace; font-size: 12px;
+    border: 1px solid #ccc; border-radius: 3px;
+  }
+  button {
+    padding: 7px 14px; background: #1e3a8a; color: white;
+    border: none; border-radius: 4px; font-size: 12px;
+    font-family: inherit; font-weight: 600; cursor: pointer;
+    margin-right: 4px;
+  }
+  button.secondary {
+    background: white; color: #1e3a8a; border: 1px solid #1e3a8a;
+  }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .small { font-size: 10px; color: #6b7280; margin-top: 8px; }
+</style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>ya-plan console</h1>
+      <div class="status" id="status">not connected</div>
+    </div>
+    <div>
+      <button id="refreshBtn" onclick="refresh()" disabled>↻</button>
+      <button class="secondary" id="logoutBtn" onclick="logout()" style="display:none">×</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="auth-box" id="authBox">
+      <strong>Authenticate</strong>
+      <div class="small">Paste your GitHub PAT (ya-plan Contents R/W). Stored only in this browser's localStorage.</div>
+      <input type="password" id="patInput" placeholder="github_pat_..." autocomplete="off">
+      <div style="margin-top:8px">
+        <button onclick="saveAuth()">Connect</button>
+      </div>
+      <div class="small">
+        WebAuthn-protected storage is a future upgrade. v1 = localStorage only.
+      </div>
+    </div>
+
+    <div class="card" id="kpisCard" style="display:none">
+      <h2>Plan state</h2>
+      <div class="grid" id="kpis">
+        <div class="kpi"><div class="kpi-label">Loading…</div></div>
+      </div>
+    </div>
+
+    <div class="card" id="openItemsCard" style="display:none">
+      <h2>Open items (HIGH)</h2>
+      <ul class="items" id="openItems">
+        <li class="loading">loading…</li>
+      </ul>
+    </div>
+
+    <div class="card" id="commitsCard" style="display:none">
+      <h2>Recent commits</h2>
+      <div id="commits">
+        <div class="loading">loading…</div>
+      </div>
+    </div>
+
+    <div class="card" id="enrpsCard" style="display:none">
+      <h2>Recent ENRPs</h2>
+      <ul class="items" id="enrps">
+        <li class="loading">loading…</li>
+      </ul>
+    </div>
+
+    <div class="card" id="eventsCard" style="display:none">
+      <h2>Pending events</h2>
+      <ul class="items" id="events">
+        <li class="loading">loading…</li>
+      </ul>
+      <div class="small">Buttons to record new events will appear here in v2.</div>
+    </div>
+
+    <div class="small" id="footer">
+      <span id="version">v1</span> ·
+      <a href="https://github.com/YoAm/ya-plan" target="_blank">repo</a> ·
+      <a href="https://github.com/YoAm/ya-plan/actions" target="_blank">Actions</a>
+    </div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
