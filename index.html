@@ -111,8 +111,9 @@
       <div class="status" id="status">not connected</div>
     </div>
     <div>
-      <button id="refreshBtn" onclick="refresh()" disabled>↻</button>
-      <button class="secondary" id="logoutBtn" onclick="logout()" style="display:none">×</button>
+      <button id="refreshBtn" onclick="refresh()" disabled title="Refresh dashboard">↻</button>
+      <button class="secondary" id="hardReloadBtn" onclick="hardReload()" title="Hard reload (clear cache)">⟳</button>
+      <button class="secondary" id="logoutBtn" onclick="logout()" style="display:none" title="Clear PAT from this browser">×</button>
     </div>
   </header>
 
@@ -166,7 +167,7 @@
     </div>
 
     <div class="small" id="footer">
-      <span id="version">v1.1</span> ·
+      <span id="version">v1.2</span> ·
       <a href="https://github.com/YoAm/ya-plan" target="_blank">repo</a> ·
       <a href="https://github.com/YoAm/ya-plan/actions" target="_blank">Actions</a>
     </div>

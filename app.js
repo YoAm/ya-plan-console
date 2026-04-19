@@ -303,5 +303,43 @@ loadPat();
 
 // Register service worker for offline fallback (ignore errors gracefully)
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('./sw.js').catch(() => {});
+  navigator.serviceWorker.register('./sw.js').then(reg => {
+    // Check for updates when page becomes visible
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') reg.update().catch(() => {});
+    });
+    // Ask SW to check for update on load too
+    reg.update().catch(() => {});
+  }).catch(() => {});
+
+  // SW posts "sw-updated" after activating a new version
+  navigator.serviceWorker.addEventListener('message', (e) => {
+    if (e.data?.type === 'sw-updated') {
+      // Show update banner if not already shown
+      if (!document.getElementById('updateBanner')) {
+        const banner = document.createElement('div');
+        banner.id = 'updateBanner';
+        banner.style.cssText = 'position:fixed;bottom:0;left:0;right:0;padding:10px;background:#16a34a;color:white;text-align:center;font-size:13px;z-index:1000;display:flex;justify-content:center;gap:8px;align-items:center';
+        banner.innerHTML = '<span>New version available</span><button onclick="location.reload()" style="padding:4px 10px;background:white;color:#16a34a;border:none;border-radius:3px;font-weight:600;cursor:pointer">Reload</button>';
+        document.body.appendChild(banner);
+      }
+    }
+    if (e.data?.type === 'sw-unregistered') {
+      location.reload();
+    }
+  });
+}
+
+// Hard-reload: unregisters SW, clears cache, reloads. For when things are stuck.
+async function hardReload() {
+  if (!confirm('Hard reload? Will clear cached app code (not your PAT). Page will refresh.')) return;
+  if ('serviceWorker' in navigator) {
+    const regs = await navigator.serviceWorker.getRegistrations();
+    for (const r of regs) await r.unregister();
+  }
+  if ('caches' in window) {
+    const names = await caches.keys();
+    await Promise.all(names.map(n => caches.delete(n)));
+  }
+  location.reload();
 }
