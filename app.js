@@ -35,13 +35,15 @@ function loadPat() {
   pat = localStorage.getItem(PAT_KEY);
   if (pat) {
     $('authBox').style.display = 'none';
-    ['kpisCard', 'openItemsCard', 'commitsCard', 'enrpsCard', 'eventsCard', 'telemetryCard']
+    ['kpisCard', 'openItemsCard', 'commitsCard', 'enrpsCard', 'eventsCard', 'telemetryCard', 'healthCard']
       .forEach(id => $(id).style.display = '');
     $('refreshBtn').disabled = false;
     $('logoutBtn').style.display = '';
     // Start auto-flushing telemetry on every page load with a PAT
     window.telemetry?.startAutoFlush(() => pat);
     window.telemetry?.log('session.start', { v: document.getElementById('version')?.textContent });
+    // Start inbox polling for PM→PWA messages
+    window.inbox?.startPolling(() => pat);
     refresh();
   }
 }
@@ -331,6 +333,32 @@ document.getElementById('refreshBtn').addEventListener('click', refresh);
 document.getElementById('hardReloadBtn').addEventListener('click', hardReload);
 document.getElementById('logoutBtn').addEventListener('click', logout);
 document.getElementById('debugBtn').addEventListener('click', () => window.debugWithAI?.showDebugModal());
+
+// Health check button
+document.getElementById('runHealthBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('runHealthBtn');
+  const meta = document.getElementById('healthMeta');
+  const container = document.getElementById('healthResults');
+  btn.disabled = true;
+  btn.textContent = 'Running…';
+  meta.textContent = '';
+  container.innerHTML = '<div style="color:#6b7280">Running checks…</div>';
+  const t0 = performance.now();
+  try {
+    const results = await window.health.runAll();
+    const elapsed = Math.round(performance.now() - t0);
+    window.health.renderResults(results, container);
+    meta.textContent = `${results.length} checks · ${elapsed}ms`;
+    const counts = { pass: 0, warn: 0, fail: 0 };
+    results.forEach(r => counts[r.status] !== undefined && counts[r.status]++);
+    window.telemetry?.log('health.run', { pass: counts.pass, warn: counts.warn, fail: counts.fail, ms: elapsed });
+  } catch (e) {
+    container.innerHTML = `<div style="color:#dc2626">Health checks crashed: ${e.message}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Re-run';
+  }
+});
 
 // Telemetry UI wiring
 const telemetryToggle = document.getElementById('telemetryToggle');

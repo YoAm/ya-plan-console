@@ -2,8 +2,8 @@
 // Caches app shell for offline use. Auto-updates: new SW takes over on first
 // fetch after deploy; posts "update-ready" message so app can reload itself.
 
-const CACHE = 'yp-console-v5';
-const SHELL = ['./', './index.html', './app.js', './telemetry.js', './debug.js', './manifest.json'];
+const CACHE = 'yp-console-v6';
+const SHELL = ['./', './index.html', './app.js', './telemetry.js', './debug.js', './inbox.js', './health.js', './manifest.json'];
 
 self.addEventListener('install', (e) => {
   // New SW version takes over immediately instead of waiting for all tabs to close

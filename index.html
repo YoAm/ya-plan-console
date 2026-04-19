@@ -184,8 +184,17 @@
       </div>
     </div>
 
+    <div class="card" id="healthCard" style="display:none">
+      <h2>Health check</h2>
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px">
+        <button id="runHealthBtn" style="padding:6px 12px;font-size:12px">Run checks</button>
+        <span id="healthMeta" class="kpi-sub"></span>
+      </div>
+      <div id="healthResults" style="font-size:12px"></div>
+    </div>
+
     <div class="small" id="footer">
-      <span id="version">v1.5</span> ·
+      <span id="version">v1.6</span> ·
       <a href="https://github.com/YoAm/ya-plan" target="_blank">repo</a> ·
       <a href="https://github.com/YoAm/ya-plan/actions" target="_blank">Actions</a>
     </div>
@@ -193,6 +202,8 @@
 
   <script src="telemetry.js"></script>
   <script src="debug.js"></script>
+  <script src="inbox.js"></script>
+  <script src="health.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
