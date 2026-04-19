@@ -159,93 +159,191 @@
       try {
         await status.append('claimed', { worker_id: workerId, ruling_id: job.ruling_id });
 
-        // Fetch spawn file + files_to_pull
-        setState('fetching_files', claimedPath, { ruling_id: job.ruling_id });
-        const spawnRepoUse = spawnRepo || dataRepo;
-        const spawnText = await ghRaw(job.spawn_file, spawnRepoUse);
-        const pulledFiles = [];
-        for (const p of job.files_to_pull) {
-          const text = await ghRaw(p, spawnRepoUse);
-          pulledFiles.push({ path: p, content: text });
-        }
-        await status.append('files_pulled', { count: pulledFiles.length + 1 });
+        if (job.substrate === 'compute') {
+          // ─── Compute substrate: Pyodide Python execution ───
+          setState('fetching_files', claimedPath, { ruling_id: job.ruling_id });
+          const spawnRepoUse2 = spawnRepo || dataRepo;
+          // script: either inline or fetched from script_file
+          let scriptText;
+          if (job.script) {
+            scriptText = job.script;
+          } else {
+            scriptText = await ghRaw(job.script_file, spawnRepoUse2);
+          }
+          const pulledFiles = [];
+          for (const p of job.files_to_pull) {
+            const text = await ghRaw(p, spawnRepoUse2);
+            pulledFiles.push({ path: p, content: text });
+          }
+          await status.append('files_pulled', { count: pulledFiles.length + 1 });
 
-        // Build payload, dispatch
-        setState('dispatching', claimedPath, { ruling_id: job.ruling_id });
-        const messages = window.runnerCore.buildMessages({ spawnText, pulledFiles });
-        const apiKey = apiKeyAccessor();
-        if (!apiKey) throw new Error('No Anthropic API key available');
-
-        await status.append('dispatch_start', { model: job.model, max_tokens: job.max_tokens });
-        const result = await window.anthropicApi.dispatch({
-          apiKey,
-          model: job.model,
-          maxTokens: job.max_tokens,
-          messages,
-          signal: abortController.signal,
-          onHeartbeat: (h) => status.append('heartbeat', h).catch(() => {}),
-        });
-
-        await status.append('dispatch_ok', {
-          input_tokens: result.usage.input_tokens,
-          output_tokens: result.usage.output_tokens,
-          stop_reason: result.stopReason,
-        });
-
-        // Extract + commit ENRP
-        setState('committing', claimedPath, { ruling_id: job.ruling_id });
-        const { enrpBody, meta } = window.runnerCore.extractEnrp(result.content);
-        const enrpName = window.runnerCore.enrpFilename(job.ruling_id);
-        const enrpPath = `${paths.enrp}/${enrpName}`.replace(/\/\//g, '/');
-        await ghPut(
-          enrpPath,
-          toBase64(enrpBody),
-          `ENRP: ${job.ruling_id} via runner`,
-          null
-        );
-        await status.append('enrp_committed', { path: enrpPath });
-
-        // Parse + commit multi-file manifest if spec'd
-        if (job.multi_file_target) {
-          const allowedPrefixes = job.multi_file_target.allowed_path_prefixes || [];
-          const targetRepo = job.multi_file_target.repo;
-          if (!targetRepo) throw new Error('multi_file_target.repo required');
-          const manifest = window.runnerCore.parseMultiFileManifest(result.content, {
-            allowedPathPrefixes: allowedPrefixes,
+          setState('dispatching', claimedPath, { ruling_id: job.ruling_id, mode: 'compute' });
+          const packages = job.python_packages || [];
+          await status.append('pyodide_init', { packages });
+          const pyodide = await window.pyodideLoader.ensurePyodide({
+            packages,
+            onProgress: (stage, detail) => {
+              status.append('pyodide_' + stage, detail || {}).catch(() => {});
+            },
           });
-          for (const file of manifest) {
-            await window.ghApi.ghPut(
-              file.path, toBase64(file.content),
-              `${job.ruling_id}: ${file.path}`,
-              { pat, ...targetRepo, sha: null }
+
+          await status.append('compute_start', {
+            script_len: scriptText.length,
+            input_files: pulledFiles.length,
+          });
+
+          const result = await window.computeExecutor.runComputeJob({
+            pyodide,
+            script: scriptText,
+            pulledFiles,
+            inputVars: job.input_vars || {},
+          });
+
+          await status.append('compute_done', {
+            ok: !result.error,
+            duration_ms: result.durationMs,
+            stdout_bytes: result.stdout.length,
+            stderr_bytes: result.stderr.length,
+            output_files: result.outputFiles.length,
+            error_name: result.error?.name || null,
+          });
+
+          if (result.error) {
+            throw new Error(`Compute script error: ${result.error.name}: ${result.error.message}`);
+          }
+
+          // Compose ENRP body from compute result (unless script emitted /output/enrp.md)
+          setState('committing', claimedPath, { ruling_id: job.ruling_id });
+          const scriptOwnEnrp = result.outputFiles.find(f => f.path === 'enrp.md');
+          const enrpBody = scriptOwnEnrp
+            ? scriptOwnEnrp.content
+            : window.computeExecutor.formatComputeEnrp({
+                rulingId: job.ruling_id,
+                scriptName: job.script_file || '(inline)',
+                result,
+                packages,
+              });
+          const enrpName = window.runnerCore.enrpFilename(job.ruling_id);
+          const enrpPath = `${paths.enrp}/${enrpName}`.replace(/\/\//g, '/');
+          await ghPut(enrpPath, toBase64(enrpBody), `ENRP: ${job.ruling_id} via runner (compute)`, null);
+          await status.append('enrp_committed', { path: enrpPath });
+
+          // Commit output files to multi_file_target if configured
+          if (job.multi_file_target) {
+            const allowedPrefixes = job.multi_file_target.allowed_path_prefixes || [];
+            const targetRepo = job.multi_file_target.repo;
+            if (!targetRepo) throw new Error('multi_file_target.repo required');
+            // Filter out enrp.md from output files (already committed separately)
+            const filesToCommit = result.outputFiles.filter(f => f.path !== 'enrp.md');
+            for (const file of filesToCommit) {
+              if (allowedPrefixes.length > 0) {
+                const allowed = allowedPrefixes.some(p => file.path.startsWith(p));
+                if (!allowed) {
+                  throw new Error(`Output path '${file.path}' outside allowed prefixes: ${allowedPrefixes.join(', ')}`);
+                }
+              }
+              await window.ghApi.ghPut(
+                file.path, toBase64(file.content),
+                `${job.ruling_id}: ${file.path}`,
+                { pat, ...targetRepo, sha: null }
+              );
+            }
+            await status.append('multifile_committed', {
+              count: filesToCommit.length,
+              repo: `${targetRepo.owner}/${targetRepo.name}`,
+            });
+          }
+          finalMessage = `compute ENRP ${enrpPath}`;
+        } else {
+          // ─── LLM substrate (existing path) ───
+          // Fetch spawn file + files_to_pull
+          setState('fetching_files', claimedPath, { ruling_id: job.ruling_id });
+          const spawnRepoUse = spawnRepo || dataRepo;
+          const spawnText = await ghRaw(job.spawn_file, spawnRepoUse);
+          const pulledFiles = [];
+          for (const p of job.files_to_pull) {
+            const text = await ghRaw(p, spawnRepoUse);
+            pulledFiles.push({ path: p, content: text });
+          }
+          await status.append('files_pulled', { count: pulledFiles.length + 1 });
+
+          // Build payload, dispatch
+          setState('dispatching', claimedPath, { ruling_id: job.ruling_id });
+          const messages = window.runnerCore.buildMessages({ spawnText, pulledFiles });
+          const apiKey = apiKeyAccessor();
+          if (!apiKey) throw new Error('No Anthropic API key available');
+
+          await status.append('dispatch_start', { model: job.model, max_tokens: job.max_tokens });
+          const result = await window.anthropicApi.dispatch({
+            apiKey,
+            model: job.model,
+            maxTokens: job.max_tokens,
+            messages,
+            signal: abortController.signal,
+            onHeartbeat: (h) => status.append('heartbeat', h).catch(() => {}),
+          });
+
+          await status.append('dispatch_ok', {
+            input_tokens: result.usage.input_tokens,
+            output_tokens: result.usage.output_tokens,
+            stop_reason: result.stopReason,
+          });
+
+          // Extract + commit ENRP
+          setState('committing', claimedPath, { ruling_id: job.ruling_id });
+          const { enrpBody, meta } = window.runnerCore.extractEnrp(result.content);
+          const enrpName = window.runnerCore.enrpFilename(job.ruling_id);
+          const enrpPath = `${paths.enrp}/${enrpName}`.replace(/\/\//g, '/');
+          await ghPut(
+            enrpPath,
+            toBase64(enrpBody),
+            `ENRP: ${job.ruling_id} via runner`,
+            null
+          );
+          await status.append('enrp_committed', { path: enrpPath });
+
+          // Parse + commit multi-file manifest if spec'd
+          if (job.multi_file_target) {
+            const allowedPrefixes = job.multi_file_target.allowed_path_prefixes || [];
+            const targetRepo = job.multi_file_target.repo;
+            if (!targetRepo) throw new Error('multi_file_target.repo required');
+            const manifest = window.runnerCore.parseMultiFileManifest(result.content, {
+              allowedPathPrefixes: allowedPrefixes,
+            });
+            for (const file of manifest) {
+              await window.ghApi.ghPut(
+                file.path, toBase64(file.content),
+                `${job.ruling_id}: ${file.path}`,
+                { pat, ...targetRepo, sha: null }
+              );
+            }
+            await status.append('multifile_committed', {
+              count: manifest.length,
+              repo: `${targetRepo.owner}/${targetRepo.name}`,
+            });
+          }
+
+          // Move claimed → done with result summary appended
+          const resultNote = {
+            completed_at: new Date().toISOString(),
+            worker_id: workerId,
+            enrp_path: enrpPath,
+            input_tokens: result.usage.input_tokens,
+            output_tokens: result.usage.output_tokens,
+          };
+          const doneContent = jobText.replace(/\n*$/, '\n') + '\n// ' + JSON.stringify(resultNote) + '\n';
+          const donePath = `${paths.done}/${filename}`.replace(/\/\//g, '/');
+          const claimedDir = await ghDir(paths.claimed);
+          const claimedEntry = claimedDir.find(e => e.name === filename);
+          if (claimedEntry) {
+            await moveJob(
+              claimedPath, claimedEntry.sha, donePath, doneContent,
+              `done: ${job.ruling_id}`
             );
           }
-          await status.append('multifile_committed', {
-            count: manifest.length,
-            repo: `${targetRepo.owner}/${targetRepo.name}`,
-          });
+          await status.append('done', { worker_id: workerId });
+          finalMessage = `ENRP ${enrpPath}`;
         }
-
-        // Move claimed → done with result summary appended
-        const resultNote = {
-          completed_at: new Date().toISOString(),
-          worker_id: workerId,
-          enrp_path: enrpPath,
-          input_tokens: result.usage.input_tokens,
-          output_tokens: result.usage.output_tokens,
-        };
-        const doneContent = jobText.replace(/\n*$/, '\n') + '\n// ' + JSON.stringify(resultNote) + '\n';
-        const donePath = `${paths.done}/${filename}`.replace(/\/\//g, '/');
-        const claimedDir = await ghDir(paths.claimed);
-        const claimedEntry = claimedDir.find(e => e.name === filename);
-        if (claimedEntry) {
-          await moveJob(
-            claimedPath, claimedEntry.sha, donePath, doneContent,
-            `done: ${job.ruling_id}`
-          );
-        }
-        await status.append('done', { worker_id: workerId });
-        finalMessage = `ENRP ${enrpPath}`;
       } catch (e) {
         console.error('processJob error', e);
         await status.append('error', {

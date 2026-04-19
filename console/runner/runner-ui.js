@@ -59,7 +59,28 @@
 
   // ═══ Render ══════════════════════════════════════════════════════════
 
+  function renderPyodideState() {
+    const el = $('pyodideState');
+    if (!el) return;
+    if (!window.pyodideLoader) {
+      el.textContent = '';
+      return;
+    }
+    const s = window.pyodideLoader.status();
+    if (s.loaded && s.packages.length > 0) {
+      el.textContent = `pyodide ${s.version} · ${s.packages.join(',')}`;
+    } else if (s.loaded) {
+      el.textContent = `pyodide ${s.version} ready`;
+    } else if (s.initialized) {
+      el.textContent = 'pyodide loading…';
+    } else {
+      el.textContent = 'pyodide not loaded';
+    }
+    el.className = 'small';
+  }
+
   function renderWorkerState() {
+    renderPyodideState();
     const badge = $('workerStateBadge');
     const detail = $('workerStateDetail');
     if (!worker) {
@@ -254,6 +275,8 @@
     updateKeyStatus();
     renderWorkerState();
     renderPendingQueue();
+    if (window._pyodideRender) clearInterval(window._pyodideRender);
+    window._pyodideRender = setInterval(renderPyodideState, 2000);
 
     // Auto-start if user previously enabled
     const autoStart = localStorage.getItem(CFG.WORKER_ENABLED_STORAGE_KEY);

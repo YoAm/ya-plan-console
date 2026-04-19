@@ -26,9 +26,23 @@
     } catch (e) {
       throw new Error(`runner-core.parseJob: invalid JSON (${e.message})`);
     }
-    const required = ['ruling_id', 'spawn_file', 'model', 'max_tokens'];
-    for (const f of required) {
-      if (job[f] == null) throw new Error(`runner-core.parseJob: missing required field '${f}'`);
+    // Default substrate to 'llm' if model field present, else 'compute' requires
+    // script or script_file.
+    if (!job.substrate) {
+      job.substrate = job.model ? 'llm' : 'compute';
+    }
+    if (!job.ruling_id) throw new Error("runner-core.parseJob: missing required field 'ruling_id'");
+    if (job.substrate === 'llm') {
+      const required = ['spawn_file', 'model', 'max_tokens'];
+      for (const f of required) {
+        if (job[f] == null) throw new Error(`runner-core.parseJob (llm): missing required field '${f}'`);
+      }
+    } else if (job.substrate === 'compute') {
+      if (!job.script && !job.script_file) {
+        throw new Error("runner-core.parseJob (compute): requires 'script' or 'script_file'");
+      }
+    } else {
+      throw new Error(`runner-core.parseJob: unknown substrate '${job.substrate}'`);
     }
     if (!Array.isArray(job.files_to_pull)) job.files_to_pull = [];
     return job;

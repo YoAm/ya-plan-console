@@ -6,10 +6,10 @@
 <!-- CSP: extends console's policy with api.anthropic.com for dispatch. -->
 <meta http-equiv="Content-Security-Policy" content="
   default-src 'none';
-  script-src 'self';
+  script-src 'self' https://cdn.jsdelivr.net;
   style-src 'self' 'unsafe-inline';
   img-src 'self' data:;
-  connect-src https://api.github.com https://api.anthropic.com;
+  connect-src https://api.github.com https://api.anthropic.com https://cdn.jsdelivr.net;
   manifest-src 'self';
   base-uri 'none';
   form-action 'none';
@@ -107,8 +107,9 @@
   <header>
     <h1>ya-plan runner</h1>
     <div>
-      <div class="v" id="version">v1.0 · AR-028</div>
+      <div class="v" id="version">v1.1 · AR-030</div>
       <div class="v" id="workerIdDisplay">…</div>
+      <div class="v" id="pyodideState"></div>
     </div>
   </header>
 
@@ -163,6 +164,8 @@
   <script src="../../infra/auth.js"></script>
   <script src="../../infra/anthropic-api.js"></script>
   <script src="../../infra/runner-core.js"></script>
+  <script src="../../infra/pyodide-loader.js"></script>
+  <script src="../../infra/compute-executor.js"></script>
   <script src="../../infra/queue-status.js"></script>
   <script src="../../infra/queue-worker.js"></script>
   <!-- Consumer wiring -->
