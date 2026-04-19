@@ -43,9 +43,34 @@ function loadPat() {
   }
 }
 
-function saveAuth() {
+async function saveAuth() {
   const val = $('patInput').value.trim();
   if (!val) { alert('Paste your PAT first.'); return; }
+
+  // Preflight: verify PAT works against ya-plan before storing
+  renderStatus('validating PAT…');
+  try {
+    const r = await fetch(
+      `https://api.github.com/repos/${REPO.owner}/${REPO.name}`,
+      { headers: { 'Authorization': `Bearer ${val}`, 'Accept': 'application/vnd.github+json' } }
+    );
+    if (!r.ok) {
+      const body = await r.text();
+      renderStatus(`PAT rejected: HTTP ${r.status}`);
+      alert(`PAT validation failed.\n\nHTTP ${r.status}\n${body.slice(0, 400)}\n\nCheck: (1) PAT has ${REPO.owner}/${REPO.name} access (2) PAT has Contents R/W permission (3) PAT not expired.`);
+      return;
+    }
+    const info = await r.json();
+    if (info.full_name !== `${REPO.owner}/${REPO.name}`) {
+      alert(`Unexpected response: got ${info.full_name}, expected ${REPO.owner}/${REPO.name}`);
+      return;
+    }
+  } catch (e) {
+    renderStatus(`network error: ${e.message}`);
+    alert(`Could not reach api.github.com.\n\n${e.name}: ${e.message}\n\nCheck: phone has internet, no VPN/firewall blocking github.com.`);
+    return;
+  }
+
   localStorage.setItem(PAT_KEY, val);
   pat = val;
   $('patInput').value = '';
@@ -149,7 +174,9 @@ function renderStatus(msg) {
 }
 
 function renderError(cardBodyId, err) {
-  $(cardBodyId).innerHTML = `<div class="err">${esc(String(err).slice(0, 300))}</div>`;
+  const msg = String(err?.message || err).slice(0, 800);
+  $(cardBodyId).innerHTML = `<div class="err">${esc(msg)}</div>`;
+  console.error(`[${cardBodyId}]`, err);
 }
 
 async function loadKpis() {
@@ -257,9 +284,16 @@ async function refresh() {
   renderStatus(`connecting to ${REPO.owner}/${REPO.name}…`);
   $('refreshBtn').disabled = true;
   const startedAt = Date.now();
-  await Promise.all([loadKpis(), loadOpenItems(), loadCommits(), loadEnrps(), loadEvents()]);
+  const results = await Promise.allSettled([loadKpis(), loadOpenItems(), loadCommits(), loadEnrps(), loadEvents()]);
   const elapsed = Date.now() - startedAt;
-  renderStatus(`${REPO.owner}/${REPO.name}@${REPO.branch} · ${elapsed}ms · ${new Date().toLocaleTimeString('en-IL')}`);
+  const failed = results.filter(r => r.status === 'rejected').length;
+  if (failed === results.length) {
+    renderStatus(`❌ all ${failed} fetches failed · check errors in cards`);
+  } else if (failed > 0) {
+    renderStatus(`⚠ ${failed}/${results.length} fetches failed · ${elapsed}ms · ${new Date().toLocaleTimeString('en-IL')}`);
+  } else {
+    renderStatus(`✓ ${REPO.owner}/${REPO.name}@${REPO.branch} · ${elapsed}ms · ${new Date().toLocaleTimeString('en-IL')}`);
+  }
   $('refreshBtn').disabled = false;
 }
 

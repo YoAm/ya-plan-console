@@ -2,7 +2,7 @@
 // Caches app shell (HTML/JS) so the console opens offline.
 // API responses are NOT cached — always fresh from GitHub when online.
 
-const CACHE = 'yp-console-v1';
+const CACHE = 'yp-console-v2';
 const SHELL = ['./', './index.html', './app.js', './manifest.json'];
 
 self.addEventListener('install', (e) => {
