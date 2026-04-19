@@ -111,9 +111,9 @@
       <div class="status" id="status">not connected</div>
     </div>
     <div>
-      <button id="refreshBtn" onclick="refresh()" disabled title="Refresh dashboard">↻</button>
-      <button class="secondary" id="hardReloadBtn" onclick="hardReload()" title="Hard reload (clear cache)">⟳</button>
-      <button class="secondary" id="logoutBtn" onclick="logout()" style="display:none" title="Clear PAT from this browser">×</button>
+      <button id="refreshBtn" disabled title="Refresh dashboard">↻</button>
+      <button class="secondary" id="hardReloadBtn" title="Hard reload (clear cache)">⟳</button>
+      <button class="secondary" id="logoutBtn" style="display:none" title="Clear PAT from this browser">×</button>
     </div>
   </header>
 
@@ -123,7 +123,7 @@
       <div class="small">Paste your GitHub PAT (ya-plan Contents R/W). Stored only in this browser's localStorage.</div>
       <input type="password" id="patInput" placeholder="github_pat_..." autocomplete="off">
       <div style="margin-top:8px">
-        <button onclick="saveAuth()">Connect</button>
+        <button id="connectBtn">Connect</button>
       </div>
       <div class="small">
         WebAuthn-protected storage is a future upgrade. v1 = localStorage only.
@@ -167,7 +167,7 @@
     </div>
 
     <div class="small" id="footer">
-      <span id="version">v1.2</span> ·
+      <span id="version">v1.3</span> ·
       <a href="https://github.com/YoAm/ya-plan" target="_blank">repo</a> ·
       <a href="https://github.com/YoAm/ya-plan/actions" target="_blank">Actions</a>
     </div>

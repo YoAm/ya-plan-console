@@ -299,6 +299,12 @@ async function refresh() {
 
 // ═══ Init ════════════════════════════════════════════════════════════
 
+// Wire all button handlers (inline onclick= is CSP-blocked by design)
+document.getElementById('connectBtn').addEventListener('click', saveAuth);
+document.getElementById('refreshBtn').addEventListener('click', refresh);
+document.getElementById('hardReloadBtn').addEventListener('click', hardReload);
+document.getElementById('logoutBtn').addEventListener('click', logout);
+
 loadPat();
 
 // Register service worker for offline fallback (ignore errors gracefully)
@@ -320,7 +326,14 @@ if ('serviceWorker' in navigator) {
         const banner = document.createElement('div');
         banner.id = 'updateBanner';
         banner.style.cssText = 'position:fixed;bottom:0;left:0;right:0;padding:10px;background:#16a34a;color:white;text-align:center;font-size:13px;z-index:1000;display:flex;justify-content:center;gap:8px;align-items:center';
-        banner.innerHTML = '<span>New version available</span><button onclick="location.reload()" style="padding:4px 10px;background:white;color:#16a34a;border:none;border-radius:3px;font-weight:600;cursor:pointer">Reload</button>';
+        const msg = document.createElement('span');
+        msg.textContent = 'New version available';
+        const btn = document.createElement('button');
+        btn.textContent = 'Reload';
+        btn.style.cssText = 'padding:4px 10px;background:white;color:#16a34a;border:none;border-radius:3px;font-weight:600;cursor:pointer';
+        btn.addEventListener('click', () => location.reload());
+        banner.appendChild(msg);
+        banner.appendChild(btn);
         document.body.appendChild(banner);
       }
     }
