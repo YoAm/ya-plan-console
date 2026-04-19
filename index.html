@@ -112,6 +112,7 @@
     </div>
     <div>
       <button id="refreshBtn" disabled title="Refresh dashboard">↻</button>
+      <button class="secondary" id="debugBtn" title="Debug with AI">🩺</button>
       <button class="secondary" id="hardReloadBtn" title="Hard reload (clear cache)">⟳</button>
       <button class="secondary" id="logoutBtn" style="display:none" title="Clear PAT from this browser">×</button>
     </div>
@@ -184,13 +185,14 @@
     </div>
 
     <div class="small" id="footer">
-      <span id="version">v1.4</span> ·
+      <span id="version">v1.5</span> ·
       <a href="https://github.com/YoAm/ya-plan" target="_blank">repo</a> ·
       <a href="https://github.com/YoAm/ya-plan/actions" target="_blank">Actions</a>
     </div>
   </main>
 
   <script src="telemetry.js"></script>
+  <script src="debug.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

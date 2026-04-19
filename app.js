@@ -330,6 +330,7 @@ document.getElementById('connectBtn').addEventListener('click', saveAuth);
 document.getElementById('refreshBtn').addEventListener('click', refresh);
 document.getElementById('hardReloadBtn').addEventListener('click', hardReload);
 document.getElementById('logoutBtn').addEventListener('click', logout);
+document.getElementById('debugBtn').addEventListener('click', () => window.debugWithAI?.showDebugModal());
 
 // Telemetry UI wiring
 const telemetryToggle = document.getElementById('telemetryToggle');
