@@ -5,7 +5,9 @@
 (function () {
   'use strict';
 
-  const PYODIDE_VERSION = 'v0.26.2';
+  // v0.29.3 (Jan 2026): addresses pyodide #5280 (Android Chrome hang on init)
+  // which affected v0.26.x. Also includes accumulated stability fixes.
+  const PYODIDE_VERSION = 'v0.29.3';
   const PYODIDE_URL = `https://cdn.jsdelivr.net/pyodide/${PYODIDE_VERSION}/full/pyodide.js`;
 
   let loadPromise = null;
@@ -74,10 +76,26 @@
         }, 2000);
 
         let pyodide;
+        // Hard timeout: if loadPyodide hangs >5min, reject.
+        // Prevents worker looping forever on broken platforms
+        // (e.g. Pyodide v0.26 on Android per #5280, fixed in v0.29+).
+        const LOAD_TIMEOUT_MS = 5 * 60 * 1000;
         try {
-          pyodide = await loadPyodide({
-            indexURL: `https://cdn.jsdelivr.net/pyodide/${PYODIDE_VERSION}/full/`,
-          });
+          pyodide = await Promise.race([
+            loadPyodide({
+              indexURL: `https://cdn.jsdelivr.net/pyodide/${PYODIDE_VERSION}/full/`,
+            }),
+            new Promise((_, reject) => setTimeout(() => reject(
+              new Error(`Pyodide load timeout: >${LOAD_TIMEOUT_MS/1000}s. ` +
+                        `WASM runtime never initialized. ` +
+                        `May indicate platform incompatibility (Android ≤ v0.26, ` +
+                        `iOS wasm-gc bug). Current version: ${PYODIDE_VERSION}.`)
+            ), LOAD_TIMEOUT_MS)),
+          ]);
+        } catch (e) {
+          // Reset loadPromise so user can retry after fixing underlying issue
+          loadPromise = null;
+          throw e;
         } finally {
           clearInterval(heartbeat);
         }
