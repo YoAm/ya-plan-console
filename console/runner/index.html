@@ -97,6 +97,51 @@
   a { color: #81c784; text-decoration: none; }
   a:hover { text-decoration: underline; }
 
+  /* Pyodide load progress UI */
+  .loading-header {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 8px;
+  }
+  .spinner {
+    width: 16px; height: 16px;
+    border: 2px solid #2a2e36;
+    border-top-color: #81c784;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    flex-shrink: 0;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading-stage {
+    font: 12px ui-monospace, monospace; color: #81c784;
+    flex: 1;
+  }
+  .loading-elapsed {
+    font: 11px ui-monospace, monospace; color: #8a8f98;
+    font-variant-numeric: tabular-nums;
+  }
+  .progress-track {
+    height: 4px; background: #2a2e36; border-radius: 2px; overflow: hidden;
+    position: relative;
+  }
+  .progress-bar {
+    position: absolute; top: 0; left: 0; bottom: 0;
+    background: linear-gradient(90deg, #81c784, #64b5f6);
+    width: 100%;
+    /* Indeterminate shimmer: cycle the background position */
+    background-size: 200% 100%;
+    animation: shimmer 2s linear infinite;
+  }
+  @keyframes shimmer {
+    0%   { background-position: 100% 0; }
+    100% { background-position: -100% 0; }
+  }
+
+  /* Worker progress — in-flight job elapsed time */
+  .job-elapsed {
+    font: 10px ui-monospace, monospace; color: #64b5f6;
+    font-variant-numeric: tabular-nums;
+    margin-left: 6px;
+  }
+
   footer {
     margin-top: 20px; padding-top: 12px; border-top: 1px solid #2a2e36;
     font: 10px ui-monospace, monospace; color: #5a5f68; text-align: center;
@@ -107,7 +152,7 @@
   <header>
     <h1>ya-plan runner</h1>
     <div>
-      <div class="v" id="version">v1.7 · reaper + prewarm</div>
+      <div class="v" id="version">v1.8 · live progress</div>
       <div class="v" id="workerIdDisplay">…</div>
       <div class="v" id="pyodideState"></div>
     </div>
@@ -144,17 +189,36 @@
     </div>
   </div>
 
-  <div class="card">
+  <div class="card" id="pyodideCard">
     <h2>Pyodide <span class="small" style="font-weight:normal">(compute engine)</span></h2>
-    <div class="row">
-      <span class="small" id="pyodideInlineStatus">…</span>
+
+    <!-- IDLE / READY state: simple label -->
+    <div id="pyodideIdleBlock">
+      <div class="row">
+        <span class="small" id="pyodideInlineStatus">…</span>
+      </div>
+      <div class="row">
+        <button id="pyodidePrewarmBtn">⚡ Pre-warm Pyodide (~10MB)</button>
+      </div>
+      <div class="small" style="margin-top:6px">
+        Lazy-loaded on first compute job. Pre-warm to avoid the first-job wait.
+      </div>
     </div>
-    <div class="row">
-      <button id="pyodidePrewarmBtn">⚡ Pre-warm Pyodide (~10MB)</button>
-    </div>
-    <div class="small" style="margin-top:6px">
-      Pyodide loads automatically when a compute job runs.
-      Pre-warming avoids the wait on the first job.
+
+    <!-- LOADING state: progress UI, hidden until load starts -->
+    <div id="pyodideLoadingBlock" style="display:none">
+      <div class="loading-header">
+        <span class="spinner"></span>
+        <span class="loading-stage" id="pyodideStageLabel">starting…</span>
+        <span class="loading-elapsed" id="pyodideElapsed">0s</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-bar" id="pyodideProgressBar"></div>
+      </div>
+      <div class="small" id="pyodideHint" style="margin-top:6px">
+        First load fetches ~10MB. Subsequent loads are cached (fast).
+      </div>
+      <div class="small" id="pyodideWarning" style="display:none; color:#ffb74d; margin-top:6px"></div>
     </div>
   </div>
 

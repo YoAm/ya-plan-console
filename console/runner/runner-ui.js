@@ -278,12 +278,23 @@
       container.innerHTML = '<div class="small">no jobs yet this session</div>';
       return;
     }
+    const now = Date.now();
     container.innerHTML = recentJobs.slice(-10).reverse().map(j => {
       const stateDisplay = j.state === 'in-flight' && j.phase ? j.phase : j.state;
+      let elapsedHtml = '';
+      if (j.state === 'in-flight') {
+        const elapsedS = Math.floor((now - j.ts) / 1000);
+        const mm = Math.floor(elapsedS / 60), ss = elapsedS % 60;
+        const elapsedStr = elapsedS < 60 ? `${elapsedS}s` : `${mm}m ${ss}s`;
+        elapsedHtml = `<span class="job-elapsed">(${elapsedStr})</span>`;
+      } else if (j.durationMs) {
+        const dS = Math.floor(j.durationMs / 1000);
+        elapsedHtml = `<span class="job-elapsed">(${dS}s)</span>`;
+      }
       return `
       <div class="job-entry job-${j.state}">
         <span class="job-ruling">${esc(j.rulingId || '?')}</span>
-        <span class="job-state">${esc(stateDisplay)}</span>
+        <span class="job-state">${esc(stateDisplay)} ${elapsedHtml}</span>
         <span class="job-ts">${esc(new Date(j.ts).toLocaleTimeString())}</span>
         <div class="job-detail">${esc(j.detail || '')}</div>
       </div>`;
@@ -518,7 +529,15 @@
     renderUpdateStatus();
     setupAutoUpdate();
     if (window._pyodideRender) clearInterval(window._pyodideRender);
-    window._pyodideRender = setInterval(renderPyodideState, 2000);
+    // Render every 1s — needed for elapsed time ticker during load
+    // and for in-flight job elapsed time display
+    window._pyodideRender = setInterval(() => {
+      renderPyodideState();
+      // Re-render recent jobs if any in-flight (updates elapsed display)
+      if (recentJobs.some(j => j.state === 'in-flight')) {
+        renderRecentJobs();
+      }
+    }, 1000);
 
     // Auto-start if user previously enabled (API key NOT required —
     // compute-substrate jobs can run without it)
