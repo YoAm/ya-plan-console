@@ -81,8 +81,11 @@
     // next poll will skip because job is already in claimed/.
     const moveJob = async (fromPath, fromSha, toPath, contentText, message) => {
       const contentB64 = toBase64(contentText);
-      // Create at new path
-      await ghPut(toPath, contentB64, message, null);
+      // Create at new path — capture the new sha from the PUT response.
+      // This sha is authoritative immediately (unlike ghDir listings which
+      // can lag behind PUTs by several seconds due to GitHub edge caching).
+      const putResp = await ghPut(toPath, contentB64, message, null);
+      const newSha = putResp?.content?.sha || null;
       // Delete old path
       const r = await fetch(
         `https://api.github.com/repos/${dataRepo.owner}/${dataRepo.name}/contents/${fromPath}`,
@@ -104,7 +107,8 @@
         const body = await r.text();
         throw new Error(`DELETE ${fromPath} failed: ${r.status} ${body.slice(0, 200)}`);
       }
-      return await r.json();
+      await r.json();  // consume body
+      return newSha;
     };
 
     // Fetch the job list from pending/.
@@ -128,7 +132,7 @@
         const jobText = await ghRaw(entry.path, dataRepo);
         const filename = entry.name;
         const claimedPath = `${paths.claimed}/${filename}`.replace(/\/\//g, '/');
-        await moveJob(
+        const claimedSha = await moveJob(
           entry.path, entry.sha, claimedPath, jobText,
           `claim: ${filename} (worker ${workerId})`
         );
@@ -137,6 +141,7 @@
           jobText,
           claimedPath,
           filename,
+          claimedSha,  // authoritative sha of claimed/<filename>, from PUT response
         };
       } catch (e) {
         // 409/422 usually = someone else claimed it; swallow and continue
@@ -147,7 +152,7 @@
 
     // Full job processing pipeline.
     const processJob = async (claim) => {
-      const { job, jobText, claimedPath, filename } = claim;
+      const { job, jobText, claimedPath, filename, claimedSha } = claim;
       const baseFilename = filename.replace(/\.json$/, '');
       const statusPath = `${paths.status}/${baseFilename}.jsonl`.replace(/\/\//g, '/');
       const status = window.queueStatus.openStatus({ pat, repo: dataRepo, path: statusPath });
@@ -254,6 +259,51 @@
             });
           }
           finalMessage = `compute ENRP ${enrpPath}`;
+
+          // Move claimed → done. This was missing pre-2026-04-20T06Z, causing
+          // every successful compute job to stay in claimed/ forever and then
+          // get reaped + re-run on a 5-min loop (visible as duplicate ENRPs
+          // with different timestamps for the same ruling_id). Uses claimedSha
+          // from the original claim PUT — bypasses ghDir edge-cache lag.
+          const computeDoneNote = {
+            completed_at: new Date().toISOString(),
+            worker_id: workerId,
+            enrp_path: enrpPath,
+            mode: 'compute',
+            duration_ms: result.durationMs,
+          };
+          const computeDoneContent = jobText.replace(/\n*$/, '\n') +
+            '\n// ' + JSON.stringify(computeDoneNote) + '\n';
+          const computeDonePath = `${paths.done}/${filename}`.replace(/\/\//g, '/');
+          try {
+            let lastErr = null;
+            for (let attempt = 1; attempt <= 3; attempt++) {
+              try {
+                await moveJob(
+                  claimedPath, claimedSha, computeDonePath, computeDoneContent,
+                  `done: ${job.ruling_id}`
+                );
+                lastErr = null;
+                break;
+              } catch (me) {
+                lastErr = me;
+                if (attempt < 3) await new Promise(r => setTimeout(r, 800 * attempt));
+              }
+            }
+            if (lastErr) throw lastErr;
+            await status.append('done', { worker_id: workerId, mode: 'compute' });
+          } catch (moveErr) {
+            // ENRP is already committed — job effectively succeeded. Log the
+            // move failure for diagnostics; reaper will retry moving claimed/
+            // back to pending/, but since ENRP exists, re-running is wasteful.
+            // (Future: reaper could detect ENRP-exists and move to done/ itself.)
+            await status.append('done_move_error', {
+              worker_id: workerId,
+              err_name: moveErr.name,
+              err_message: String(moveErr.message).slice(0, 300),
+              enrp_path: enrpPath,  // evidence of success for manual cleanup
+            }).catch(() => {});
+          }
         } else {
           // ─── LLM substrate (existing path) ───
           // Fetch spawn file + files_to_pull
@@ -333,14 +383,11 @@
           };
           const doneContent = jobText.replace(/\n*$/, '\n') + '\n// ' + JSON.stringify(resultNote) + '\n';
           const donePath = `${paths.done}/${filename}`.replace(/\/\//g, '/');
-          const claimedDir = await ghDir(paths.claimed);
-          const claimedEntry = claimedDir.find(e => e.name === filename);
-          if (claimedEntry) {
-            await moveJob(
-              claimedPath, claimedEntry.sha, donePath, doneContent,
-              `done: ${job.ruling_id}`
-            );
-          }
+          // Use claimedSha from the original claim PUT; no ghDir lookup.
+          await moveJob(
+            claimedPath, claimedSha, donePath, doneContent,
+            `done: ${job.ruling_id}`
+          );
           await status.append('done', { worker_id: workerId });
           finalMessage = `ENRP ${enrpPath}`;
         }
@@ -354,36 +401,26 @@
         }).catch(() => {});
         finalState = 'failed';
         finalMessage = e.message;
-        // Move claimed → failed
+        // Move claimed → failed using claimedSha (no ghDir lookup)
         try {
-          const claimedDir = await ghDir(paths.claimed);
-          const claimedEntry = claimedDir.find(e => e.name === filename);
-          if (claimedEntry) {
-            const failedPath = `${paths.failed}/${filename}`.replace(/\/\//g, '/');
-            const failedContent = jobText.replace(/\n*$/, '\n') +
-              '\n// failed: ' + String(e.message).slice(0, 300) + '\n';
-            // Retry up to 3 times — GitHub API occasionally 409's on rapid writes.
-            let lastErr = null;
-            for (let attempt = 1; attempt <= 3; attempt++) {
-              try {
-                await moveJob(
-                  claimedPath, claimedEntry.sha, failedPath, failedContent,
-                  `failed: ${job.ruling_id}`
-                );
-                lastErr = null;
-                break;
-              } catch (me) {
-                lastErr = me;
-                if (attempt < 3) await new Promise(r => setTimeout(r, 800 * attempt));
-              }
+          const failedPath = `${paths.failed}/${filename}`.replace(/\/\//g, '/');
+          const failedContent = jobText.replace(/\n*$/, '\n') +
+            '\n// failed: ' + String(e.message).slice(0, 300) + '\n';
+          let lastErr = null;
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+              await moveJob(
+                claimedPath, claimedSha, failedPath, failedContent,
+                `failed: ${job.ruling_id}`
+              );
+              lastErr = null;
+              break;
+            } catch (me) {
+              lastErr = me;
+              if (attempt < 3) await new Promise(r => setTimeout(r, 800 * attempt));
             }
-            if (lastErr) throw lastErr;  // surface to outer catch
-          } else {
-            await status.append('failed_move_skipped', {
-              reason: 'claimed entry not found in GitHub dir listing',
-              filename,
-            }).catch(() => {});
           }
+          if (lastErr) throw lastErr;
         } catch (moveErr) {
           console.warn('failed-state move failed', moveErr);
           // Record to telemetry so we see this in runner-status/. Without this
