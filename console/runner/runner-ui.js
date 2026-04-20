@@ -102,20 +102,55 @@
     }
   }
 
-  function setupAutoUpdate() {
+  async function setupAutoUpdate() {
     if (!navigator.serviceWorker) return;
 
-    // Register SW if not already (console's index.html does this; runner
-    // subpath inherits same SW via same-origin scope).
+    // Register SW ourselves. The console root registers at ./sw.js relative to
+    // /console/, which resolves to /console/sw.js — same as ours since runner
+    // is a subpath. Using { updateViaCache: 'none' } so Chrome doesn't serve
+    // a stale sw.js from its HTTP cache. Calling .update() immediately on
+    // registration forces a fresh check on every page load, bypassing stale
+    // HTTP cache entirely.
+    try {
+      const reg = await navigator.serviceWorker.register('../sw.js', { updateViaCache: 'none' });
+      reg.update().catch(() => {});
+    } catch (e) {
+      console.warn('SW register failed', e);
+    }
+
     // Trigger reload when new SW takes over
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       if (reloadScheduled) return;
       reloadScheduled = true;
       const el = document.getElementById('updateStatus');
       if (el) { el.textContent = 'new version → reloading in 2s…'; el.className = 'warn'; }
-      // Small delay so user sees the status, then reload
       setTimeout(() => location.reload(), 2000);
     });
+
+    // FIRST-REFRESH FIX: on page load, check if a new SW is already waiting.
+    // Without this, the user has to refresh TWICE to pick up a new version:
+    //   1st refresh → new sw.js detected, new SW enters 'waiting' state
+    //   2nd refresh → new SW was activated in the background, now controls page
+    // This code detects the waiting SW immediately and tells it to skipWaiting,
+    // which fires controllerchange → auto-reload. One refresh is enough.
+    navigator.serviceWorker.getRegistration().then(reg => {
+      if (!reg) return;
+      // If there's already a waiting SW (from a previous load's install), activate it now
+      if (reg.waiting) {
+        reg.waiting.postMessage({ type: 'skipWaiting' });
+      }
+      // If a new SW is installing, wait for it to become waiting then activate
+      reg.addEventListener('updatefound', () => {
+        const installing = reg.installing;
+        if (!installing) return;
+        installing.addEventListener('statechange', () => {
+          if (installing.state === 'installed' && navigator.serviceWorker.controller) {
+            // new SW is ready but old one still controls — tell new one to take over
+            installing.postMessage({ type: 'skipWaiting' });
+          }
+        });
+      });
+    }).catch(() => { /* SW not supported or access denied */ });
 
     // Poll every 60s
     if (updatePollTimer) clearInterval(updatePollTimer);
@@ -771,7 +806,7 @@
 
   // ═══ Init ════════════════════════════════════════════════════════════
 
-  function init() {
+  async function init() {
     $('setKeyBtn').addEventListener('click', onSetApiKey);
     $('clearKeyBtn').addEventListener('click', onClearApiKey);
     $('startBtn').addEventListener('click', onStartWorker);

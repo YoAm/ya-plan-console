@@ -358,7 +358,9 @@ loadPatFromStorage();
 
 // Register service worker for offline fallback (ignore errors gracefully)
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('./sw.js').then(reg => {
+  navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).then(reg => {
+    // Force an immediate update check on every page load, bypassing HTTP cache
+    reg.update().catch(() => {});
     // Check for updates when page becomes visible
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') reg.update().catch(() => {});

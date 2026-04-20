@@ -1,11 +1,11 @@
-// ya-plan console service worker v21 (AR-025 monorepo restructure)
+// ya-plan console service worker v22 (AR-025 monorepo restructure)
 // Caches console/ shell. Infra modules at ../infra/ are outside this SW's
 // scope, so they rely on browser HTTP cache — acceptable trade-off (first
 // offline load requires prior network visit that primed the HTTP cache).
 // Auto-updates: new SW takes over on first fetch after deploy; posts
 // "sw-updated" message so app can reload itself.
 
-const CACHE = 'yp-console-v21';
+const CACHE = 'yp-console-v22';
 const SHELL = [
   './',
   './index.html',
