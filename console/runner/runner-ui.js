@@ -83,7 +83,7 @@
     return String(s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-  });
+  }
 
   // ═══ Auto-update (AR-034) ════════════════════════════════════════════
   // Runner polls for SW updates every 60s; on controllerchange, auto-reloads.
