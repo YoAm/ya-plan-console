@@ -111,8 +111,6 @@
       <div class="status" id="status">not connected</div>
     </div>
     <div>
-      <button id="refreshBtn" disabled title="Refresh dashboard">↻</button>
-      <button class="secondary" id="debugBtn" title="Debug with AI">🩺</button>
       <button class="secondary" id="hardReloadBtn" title="Hard reload (clear cache)">⟳</button>
       <button class="secondary" id="logoutBtn" style="display:none" title="Clear PAT from this browser">×</button>
     </div>
@@ -131,47 +129,16 @@
       </div>
     </div>
 
-    <div class="card" id="kpisCard" style="display:none">
-      <h2>Plan state</h2>
-      <div class="grid" id="kpis">
-        <div class="kpi"><div class="kpi-label">Loading…</div></div>
-      </div>
+    <div class="card" id="runnerLinkCard">
+      <h2>Runner</h2>
+      <div class="small" style="margin-bottom:8px">The queue-worker dashboard — start/stop, view jobs, drain the queue.</div>
+      <a href="./runner/" style="display:inline-block;padding:10px 16px;background:#3b82f6;color:white;text-decoration:none;border-radius:6px;font-weight:500">🤖 Open runner →</a>
     </div>
 
-    <div class="card" id="openItemsCard" style="display:none">
-      <h2>Open items (HIGH)</h2>
-      <ul class="items" id="openItems">
-        <li class="loading">loading…</li>
-      </ul>
-    </div>
 
-    <div class="card" id="commitsCard" style="display:none">
-      <h2>Recent commits</h2>
-      <div id="commits">
-        <div class="loading">loading…</div>
-      </div>
-    </div>
 
-    <div class="card" id="enrpsCard" style="display:none">
-      <h2>Recent ENRPs</h2>
-      <ul class="items" id="enrps">
-        <li class="loading">loading…</li>
-      </ul>
-    </div>
 
-    <div class="card" id="eventsCard" style="display:none">
-      <h2>Events</h2>
-      <div style="margin-bottom:12px">
-        <div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">Record new</div>
-        <div id="eventButtons"></div>
-      </div>
-      <div>
-        <div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">Pending (waiting for PM)</div>
-        <ul class="items" id="events">
-          <li class="loading">loading…</li>
-        </ul>
-      </div>
-    </div>
+
 
     <div class="card" id="telemetryCard" style="display:none">
       <h2>Telemetry</h2>
@@ -190,17 +157,9 @@
       </div>
     </div>
 
-    <div class="card" id="healthCard" style="display:none">
-      <h2>Health check</h2>
-      <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px">
-        <button id="runHealthBtn" style="padding:6px 12px;font-size:12px">Run checks</button>
-        <span id="healthMeta" class="kpi-sub"></span>
-      </div>
-      <div id="healthResults" style="font-size:12px"></div>
-    </div>
 
     <div class="small" id="footer">
-      <span id="version">v2.0</span> ·
+      <span id="version">v2.1 · ops-only landing</span> ·
       <a href="./runner/">🤖 runner</a> ·
       <a href="../">router</a> ·
       <a href="https://github.com/YoAm/ya-plan" target="_blank">repo</a> ·
@@ -212,12 +171,8 @@
   <script src="../infra/gh-api.js"></script>
   <script src="../infra/auth.js"></script>
   <script src="./telemetry.js"></script>
-  <script src="./debug.js"></script>
-  <script src="./inbox.js"></script>
-  <script src="./health.js"></script>
   <!-- Application wiring -->
   <script src="./config.js"></script>
-  <script src="./events-compose.js"></script>
   <script src="./app.js"></script>
 </body>
 </html>
