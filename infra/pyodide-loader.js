@@ -27,18 +27,32 @@
       loadPromise = (async () => {
         // Dynamic script tag injection — dispatch origin is CDN, not self
         onProgress?.('fetching_script', { url: PYODIDE_URL });
+        const fetchStart = Date.now();
         await injectScript(PYODIDE_URL);
+        onProgress?.('script_loaded', { elapsed_ms: Date.now() - fetchStart });
 
         if (typeof loadPyodide !== 'function') {
           throw new Error('pyodide-loader: loadPyodide not defined after script injection');
         }
 
         onProgress?.('initializing');
-        const pyodide = await loadPyodide({
-          indexURL: `https://cdn.jsdelivr.net/pyodide/${PYODIDE_VERSION}/full/`,
-        });
+        // Emit a heartbeat every 5s during loadPyodide so status log shows
+        // progress even though loadPyodide itself is a single await.
+        const initStart = Date.now();
+        const heartbeat = setInterval(() => {
+          onProgress?.('initializing_heartbeat', { elapsed_s: Math.round((Date.now() - initStart) / 1000) });
+        }, 5000);
 
-        onProgress?.('ready');
+        let pyodide;
+        try {
+          pyodide = await loadPyodide({
+            indexURL: `https://cdn.jsdelivr.net/pyodide/${PYODIDE_VERSION}/full/`,
+          });
+        } finally {
+          clearInterval(heartbeat);
+        }
+
+        onProgress?.('ready', { init_ms: Date.now() - initStart });
         return pyodide;
       })();
     }

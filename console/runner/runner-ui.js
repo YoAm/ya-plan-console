@@ -269,14 +269,16 @@
       container.innerHTML = '<div class="small">no jobs yet this session</div>';
       return;
     }
-    container.innerHTML = recentJobs.slice(-10).reverse().map(j => `
+    container.innerHTML = recentJobs.slice(-10).reverse().map(j => {
+      const stateDisplay = j.state === 'in-flight' && j.phase ? j.phase : j.state;
+      return `
       <div class="job-entry job-${j.state}">
         <span class="job-ruling">${esc(j.rulingId || '?')}</span>
-        <span class="job-state">${esc(j.state)}</span>
+        <span class="job-state">${esc(stateDisplay)}</span>
         <span class="job-ts">${esc(new Date(j.ts).toLocaleTimeString())}</span>
         <div class="job-detail">${esc(j.detail || '')}</div>
-      </div>
-    `).join('');
+      </div>`;
+    }).join('');
   }
 
   async function renderPendingQueue() {
@@ -336,13 +338,23 @@
       workerId,
       onStateChange: (state, jobPath, detail) => {
         renderWorkerState();
-        if (state === 'dispatching' || state === 'fetching_files') {
+        // Only push ONE entry per job, at the first transition out of polling.
+        // Subsequent state transitions (dispatching, committing) mutate the
+        // existing entry, not create a new one.
+        if (state === 'fetching_files') {
           recentJobs.push({
             rulingId: detail?.ruling_id,
             state: 'in-flight',
+            phase: 'fetching',
             ts: Date.now(),
             detail: jobPath ? jobPath.split('/').pop() : '',
           });
+        } else if (state === 'dispatching' || state === 'committing') {
+          // Mutate the latest in-flight entry with current phase
+          const last = recentJobs[recentJobs.length - 1];
+          if (last && last.state === 'in-flight') {
+            last.phase = state === 'dispatching' ? (detail?.mode === 'compute' ? 'computing' : 'dispatching') : 'committing';
+          }
         } else if (state === 'idle' && detail?.lastState) {
           // Record completion
           const last = recentJobs[recentJobs.length - 1];
