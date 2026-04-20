@@ -286,4 +286,12 @@
   }
 
   window.runnerUi = { init };
+
+  // Self-bootstrap on load (inline <script> would be CSP-blocked under
+  // script-src 'self'; this must live inside an external file).
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
 })();

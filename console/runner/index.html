@@ -172,13 +172,5 @@
   <script src="../config.js"></script>
   <script src="./config.js"></script>
   <script src="./runner-ui.js"></script>
-  <script>
-    // Bootstrap: wait for DOM + init UI
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', () => window.runnerUi.init());
-    } else {
-      window.runnerUi.init();
-    }
-  </script>
 </body>
 </html>
