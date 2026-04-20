@@ -45,6 +45,22 @@ function allowsEval(directives) {
   return scriptSrc.includes("'unsafe-eval'");
 }
 
+function allowsWasmCompile(directives) {
+  // A page can compile/instantiate WebAssembly if EITHER:
+  //   - script-src includes 'wasm-unsafe-eval', OR
+  //   - script-src includes 'unsafe-eval' (superset)
+  // Per MDN CSP script-src docs and WebAssembly CSP proposal.
+  const scriptSrc = directives['script-src'] || directives['default-src'] || [];
+  return scriptSrc.includes("'wasm-unsafe-eval'") || scriptSrc.includes("'unsafe-eval'");
+}
+
+function loadsPyodide(html) {
+  // Detect if the page intends to load Pyodide. Either:
+  //   1. Has an infra/pyodide-loader.js <script src>, or
+  //   2. Mentions cdn.jsdelivr.net/pyodide in the HTML body.
+  return /pyodide-loader\.js/.test(html) || /cdn\.jsdelivr\.net\/pyodide/.test(html);
+}
+
 function countInlineScripts(html) {
   // Inline <script> = <script> tags without src attribute.
   const matches = html.match(/<script(?![^>]*\bsrc\s*=)[^>]*>[\s\S]*?<\/script>/gi) || [];
@@ -86,6 +102,25 @@ function testHtml(htmlPath, { expectsInlineScripts = false } = {}) {
 
   passed++;
   console.log(`  ✓ no CSP-blocked inline scripts`);
+
+  // NEW: if this page loads Pyodide, require wasm-unsafe-eval
+  if (loadsPyodide(html)) {
+    const wasmOk = allowsWasmCompile(dir);
+    if (wasmOk) {
+      passed++;
+      console.log(`  ✓ CSP allows WebAssembly compilation (pyodide page)`);
+    } else {
+      failed++;
+      failures.push(
+        `${htmlPath}: page loads Pyodide but CSP script-src missing 'wasm-unsafe-eval'. ` +
+        `Without it, WebAssembly.compile is blocked and loadPyodide() hangs forever ` +
+        `(Pyodide issue #2255: no internal timeout). ` +
+        `Add 'wasm-unsafe-eval' to script-src. ` +
+        `Current script-src: ${(dir['script-src'] || []).join(' ') || '(empty)'}`
+      );
+      console.log(`  ✗ CSP missing 'wasm-unsafe-eval' for pyodide page — WILL HANG ON LOAD`);
+    }
+  }
 }
 
 console.log('=== CSP enforcement test ===');

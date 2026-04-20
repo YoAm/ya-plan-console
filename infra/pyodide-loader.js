@@ -121,8 +121,147 @@
   //     stages: 'fetching_script', 'initializing', 'loading_packages', 'ready'
   //
   // Returns: Promise<PyodideInterface>
+  // ═══ Preflight health checks ═════════════════════════════════════════
+  // These catch environment bugs BEFORE attempting loadPyodide, which can
+  // hang silently for minutes when WASM compile is CSP-blocked (see
+  // pyodide/pyodide#2255 — loadPyodide has no timeout and catches its own
+  // internal errors). We surface the issue at our layer instead.
+  //
+  // Returns: { ok: boolean, checks: { name, ok, detail }[], summary: string }
+  async function runHealthChecks() {
+    const checks = [];
+
+    // 1. WebAssembly global exists
+    const hasWA = typeof WebAssembly !== 'undefined' && typeof WebAssembly.compile === 'function';
+    checks.push({
+      name: 'webassembly_api',
+      ok: hasWA,
+      detail: hasWA ? 'WebAssembly.compile present' : 'WebAssembly API missing (very old browser?)',
+    });
+
+    // 2. WASM compilation actually works (this is the CSP-blocker test)
+    // Smallest valid WASM module: magic + version bytes + empty module.
+    const MIN_WASM = new Uint8Array([
+      0x00, 0x61, 0x73, 0x6d,  // \0asm magic
+      0x01, 0x00, 0x00, 0x00,  // version 1
+    ]);
+    let compileOk = false, compileErr = null;
+    if (hasWA) {
+      try {
+        await WebAssembly.compile(MIN_WASM);
+        compileOk = true;
+      } catch (e) {
+        compileErr = e;
+      }
+    }
+    checks.push({
+      name: 'wasm_compile',
+      ok: compileOk,
+      detail: compileOk
+        ? 'WebAssembly.compile succeeded on minimal module'
+        : `FAIL: ${compileErr?.message || 'unknown'} — likely CSP missing 'wasm-unsafe-eval' in script-src`,
+    });
+
+    // 3. WASM instantiation works
+    let instantiateOk = false, instantiateErr = null;
+    if (compileOk) {
+      try {
+        const mod = await WebAssembly.compile(MIN_WASM);
+        await WebAssembly.instantiate(mod);
+        instantiateOk = true;
+      } catch (e) {
+        instantiateErr = e;
+      }
+    }
+    checks.push({
+      name: 'wasm_instantiate',
+      ok: instantiateOk,
+      detail: instantiateOk
+        ? 'WebAssembly.instantiate succeeded'
+        : `FAIL: ${instantiateErr?.message || 'skipped (compile failed)'}`,
+    });
+
+    // 4. WebAssembly.instantiateStreaming available (needed for large .wasm files)
+    const hasStreaming = hasWA && typeof WebAssembly.instantiateStreaming === 'function';
+    checks.push({
+      name: 'wasm_instantiate_streaming',
+      ok: hasStreaming,
+      detail: hasStreaming
+        ? 'WebAssembly.instantiateStreaming present'
+        : 'missing — will fall back to ArrayBuffer path (slower but works)',
+    });
+
+    // 5. Fetch API exists (for CDN downloads)
+    const hasFetch = typeof fetch === 'function';
+    checks.push({
+      name: 'fetch_api',
+      ok: hasFetch,
+      detail: hasFetch ? 'fetch() present' : 'fetch API missing',
+    });
+
+    // 6. CDN reachability (don't wait long; 3s timeout)
+    let cdnOk = false, cdnErr = null;
+    if (hasFetch) {
+      try {
+        const ctl = new AbortController();
+        const timer = setTimeout(() => ctl.abort(), 3000);
+        const resp = await fetch(`https://cdn.jsdelivr.net/pyodide/${PYODIDE_VERSION}/full/pyodide.js`, {
+          method: 'HEAD', signal: ctl.signal,
+        });
+        clearTimeout(timer);
+        cdnOk = resp.ok;
+        if (!resp.ok) cdnErr = new Error(`HTTP ${resp.status}`);
+      } catch (e) {
+        cdnErr = e;
+      }
+    }
+    checks.push({
+      name: 'cdn_reachable',
+      ok: cdnOk,
+      detail: cdnOk
+        ? `cdn.jsdelivr.net/pyodide/${PYODIDE_VERSION}/ reachable`
+        : `FAIL: ${cdnErr?.message || 'unknown'} — check network/CSP connect-src`,
+    });
+
+    // 7. Structured clone support (Pyodide uses it extensively)
+    const hasStructuredClone = typeof structuredClone === 'function';
+    checks.push({
+      name: 'structured_clone',
+      ok: hasStructuredClone,
+      detail: hasStructuredClone ? 'structuredClone available' : 'old browser (may still work)',
+    });
+
+    const critical = checks.filter(c => ['webassembly_api', 'wasm_compile', 'wasm_instantiate', 'fetch_api'].includes(c.name));
+    const allCriticalOk = critical.every(c => c.ok);
+    const failed = checks.filter(c => !c.ok);
+    const summary = allCriticalOk
+      ? `all critical checks passed (${checks.length - failed.length}/${checks.length})`
+      : `FAILED: ${failed.map(c => c.name).join(', ')}`;
+
+    return { ok: allCriticalOk, checks, summary };
+  }
+
   async function ensurePyodide({ packages = [], onProgress = null } = {}) {
     if (!loadPromise) {
+      // Preflight: detect CSP/browser incompat BEFORE attempting loadPyodide.
+      // Without this, a blocked WebAssembly.compile would hang loadPyodide
+      // silently (no timeout, no error surfaced) — see pyodide issue #2255.
+      const health = await runHealthChecks();
+      if (!health.ok) {
+        const wasmCheck = health.checks.find(c => c.name === 'wasm_compile');
+        if (wasmCheck && !wasmCheck.ok) {
+          throw new Error(
+            `Pyodide cannot load: WebAssembly compilation blocked. ` +
+            `This is almost always a CSP issue — the page's ` +
+            `Content-Security-Policy needs 'wasm-unsafe-eval' in the ` +
+            `script-src directive. See MDN: ` +
+            `https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Security-Policy/script-src. ` +
+            `Detail: ${wasmCheck.detail}`
+          );
+        }
+        throw new Error(`Pyodide preflight failed: ${health.summary}`);
+      }
+
       progress.startMs = Date.now();
       progress.stage = 'starting';
       progress.stageStartMs = Date.now();
@@ -239,5 +378,5 @@
     };
   }
 
-  window.pyodideLoader = { ensurePyodide, status, PYODIDE_VERSION };
+  window.pyodideLoader = { ensurePyodide, status, runHealthChecks, PYODIDE_VERSION };
 })();

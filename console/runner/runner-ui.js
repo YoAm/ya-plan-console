@@ -44,6 +44,45 @@
       sourceFile: entry.sourceFile,
       lineNumber: entry.lineNumber,
     });
+
+    // WASM-related CSP violations are critical for the compute substrate —
+    // without WASM, Pyodide hangs silently. Surface immediately with the
+    // exact fix. Must NOT be lost in status ticker (as happened prior).
+    if (entry.blockedURI === 'wasm-eval' ||
+        (entry.violatedDirective && entry.violatedDirective.includes('wasm')) ||
+        (entry.sourceFile && entry.sourceFile.includes('pyodide'))) {
+      showCriticalError(
+        'WASM blocked by Content-Security-Policy',
+        `Pyodide cannot execute. script-src needs 'wasm-unsafe-eval'. ` +
+        `Blocked URI: ${entry.blockedURI}. Violated: ${entry.violatedDirective}. ` +
+        `Fix: edit the CSP meta tag in runner/index.html to include 'wasm-unsafe-eval' in script-src.`
+      );
+    }
+  });
+
+  // ═══ Critical error banner ══════════════════════════════════════════
+  // For issues the user MUST see immediately. Persists across renders.
+  function showCriticalError(title, detail) {
+    let banner = document.getElementById('criticalErrorBanner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'criticalErrorBanner';
+      banner.style.cssText = 'background:#5a1818;color:#ffe0b2;padding:12px 16px;' +
+        'border:2px solid #ff6b6b;border-radius:6px;margin:10px 0;' +
+        'font:12px ui-monospace,monospace;line-height:1.5;';
+      const main = document.querySelector('main') || document.body;
+      main.insertBefore(banner, main.firstChild);
+    }
+    if (banner.dataset.title === title) return;  // dedupe
+    banner.dataset.title = title;
+    banner.innerHTML = `<strong>⚠ ${escapeHtml(title)}</strong><br>` +
+                       `<span style="opacity:0.9">${escapeHtml(detail)}</span>`;
+  }
+
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   });
 
   // ═══ Auto-update (AR-034) ════════════════════════════════════════════
@@ -590,6 +629,58 @@
     }
   }
 
+  // ═══ Health checks ═══════════════════════════════════════════════════
+  // Browser-capability diagnostic: runs preflight, renders results.
+  // Purpose: when Pyodide hangs or fails, this tells the user EXACTLY which
+  // capability is missing (CSP block vs. network vs. old browser).
+
+  async function runHealthCheckAndRender() {
+    const btn = $('healthCheckBtn');
+    const summary = $('healthSummary');
+    const results = $('healthResults');
+    if (!btn || !summary || !results) return;
+
+    btn.disabled = true;
+    btn.textContent = 'running…';
+    summary.textContent = 'checking WASM, fetch, CDN…';
+    summary.className = 'small warn';
+    results.style.display = 'none';
+
+    try {
+      const hc = await window.pyodideLoader.runHealthChecks();
+      const passed = hc.checks.filter(c => c.ok).length;
+      const total = hc.checks.length;
+      summary.textContent = hc.ok
+        ? `✓ ${passed}/${total} checks passed`
+        : `✗ ${total - passed} failed — see details`;
+      summary.className = hc.ok ? 'small ok' : 'small err';
+
+      results.innerHTML = hc.checks.map(c => {
+        const icon = c.ok ? '✓' : '✗';
+        const cls = c.ok ? 'ok' : 'err';
+        return `<div class="${cls}" style="margin:4px 0">
+          <span style="display:inline-block;width:18px">${icon}</span>
+          <span style="font-weight:bold">${esc(c.name)}</span>
+          <div style="margin-left:18px; color:#8a8f98; font-size:10px">${esc(c.detail)}</div>
+        </div>`;
+      }).join('');
+      results.style.display = '';
+
+      tlog('health_check', {
+        ok: hc.ok,
+        passed, total,
+        failed: hc.checks.filter(c => !c.ok).map(c => c.name),
+      });
+    } catch (e) {
+      summary.textContent = `✗ error: ${String(e.message).slice(0, 80)}`;
+      summary.className = 'small err';
+      results.style.display = 'none';
+      tlog('health_check_error', { err: String(e.message).slice(0, 200) });
+    }
+    btn.textContent = 'Re-run checks';
+    btn.disabled = false;
+  }
+
   // ═══ Feedback ════════════════════════════════════════════════════════
   // One-tap feedback that writes an event to ya-plan/events/ with full
   // runner state snapshot. PM reads next session to know what you saw.
@@ -719,6 +810,11 @@
         prompt('Copy this debug bundle:', text.slice(0, 2000));
       }
     });
+
+    const healthBtn = $('healthCheckBtn');
+    if (healthBtn) healthBtn.addEventListener('click', runHealthCheckAndRender);
+    // Auto-run health check on load so user sees it before any issue arises
+    setTimeout(() => { runHealthCheckAndRender().catch(() => {}); }, 500);
 
     const prewarmBtn = $('pyodidePrewarmBtn');
     if (prewarmBtn) prewarmBtn.addEventListener('click', async () => {
