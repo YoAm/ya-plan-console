@@ -1,11 +1,11 @@
-// ya-plan console service worker v14 (AR-025 monorepo restructure)
+// ya-plan console service worker v15 (AR-025 monorepo restructure)
 // Caches console/ shell. Infra modules at ../infra/ are outside this SW's
 // scope, so they rely on browser HTTP cache — acceptable trade-off (first
 // offline load requires prior network visit that primed the HTTP cache).
 // Auto-updates: new SW takes over on first fetch after deploy; posts
 // "sw-updated" message so app can reload itself.
 
-const CACHE = 'yp-console-v14';
+const CACHE = 'yp-console-v15';
 const SHELL = [
   './',
   './index.html',
@@ -47,7 +47,28 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   // Never cache GitHub API — always hit the network
   if (url.hostname === 'api.github.com') return;
-  // App shell: cache-first, network fallback
+
+  // For HTML and JS: network-first, cache fallback.
+  // Rationale: cache-first means users can get stuck on stale JS after
+  // a push (no listener to hear the new-SW signal). Network-first ensures
+  // each load pulls fresh when online, with offline-cache as backup.
+  const isHtml = e.request.destination === 'document' || url.pathname.endsWith('.html') || url.pathname.endsWith('/');
+  const isJs = url.pathname.endsWith('.js');
+  if (isHtml || isJs) {
+    e.respondWith(
+      fetch(e.request).then(resp => {
+        // Update cache in background for offline fallback
+        if (resp && resp.ok) {
+          const copy = resp.clone();
+          caches.open(CACHE).then(c => c.put(e.request, copy)).catch(() => {});
+        }
+        return resp;
+      }).catch(() => caches.match(e.request).then(c => c || Response.error()))
+    );
+    return;
+  }
+
+  // Non-JS/HTML assets (icons, manifest): cache-first for speed
   e.respondWith(caches.match(e.request).then(cached => cached || fetch(e.request)));
 });
 

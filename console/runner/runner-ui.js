@@ -457,6 +457,20 @@
     const wakeLockBtn = $('wakeLockToggleBtn');
     if (wakeLockBtn) wakeLockBtn.addEventListener('click', toggleWakeLock);
 
+    const hardReloadBtn = $('hardReloadBtn');
+    if (hardReloadBtn) hardReloadBtn.addEventListener('click', async () => {
+      // Nuclear reload: unregister SW, delete all caches, reload page.
+      try {
+        if (navigator.serviceWorker) {
+          const regs = await navigator.serviceWorker.getRegistrations();
+          await Promise.all(regs.map(r => r.unregister()));
+        }
+        const keys = await caches.keys();
+        await Promise.all(keys.map(k => caches.delete(k)));
+      } catch (e) { console.warn('hard reload pre-cleanup error', e); }
+      location.reload();
+    });
+
     $('workerIdDisplay').textContent = getOrCreateWorkerId();
     updateKeyStatus();
     renderWorkerState();
