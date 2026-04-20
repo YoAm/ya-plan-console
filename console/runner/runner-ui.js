@@ -485,6 +485,8 @@
       container.innerHTML = '<div class="err">no GitHub PAT — connect via ../index.html first</div>';
       return;
     }
+    // Kick counts refresh in parallel (doesn't block pending list)
+    renderQueueCounts().catch(() => {});
     try {
       const entries = await window.ghApi.ghDir(CFG.QUEUE_PATHS.pending, {
         pat, ...CFG.DATA_REPO,
@@ -509,6 +511,35 @@
         container.innerHTML = `<div class="err">${esc(e.message)}</div>`;
       }
     }
+  }
+
+  // Queue counts: fetch each of the 4 state dirs in parallel, render badges.
+  // New in AR-037 Phase 2 — gives Yonti a 1-line "how many jobs in each state"
+  // without drilling into each folder. Counts are cheap (ghDir is cached).
+  async function renderQueueCounts() {
+    const el = $('queueCounts');
+    if (!el) return;
+    const pat = getPat();
+    if (!pat) return;
+    const dirs = ['pending', 'claimed', 'done', 'failed'];
+    const colors = { pending: 'ct-pending', claimed: 'ct-claimed', done: 'ct-done', failed: 'ct-failed' };
+    const counts = {};
+    await Promise.all(dirs.map(async (d) => {
+      const p = CFG.QUEUE_PATHS[d];
+      if (!p) { counts[d] = '?'; return; }
+      try {
+        const entries = await window.ghApi.ghDir(p, { pat, ...CFG.DATA_REPO });
+        counts[d] = (Array.isArray(entries) ? entries : [])
+          .filter(e => e.type === 'file' && e.name.endsWith('.json')).length;
+      } catch (e) {
+        counts[d] = (String(e.message).includes('404')) ? 0 : '?';
+      }
+    }));
+    el.innerHTML = dirs.map(d => {
+      const n = counts[d];
+      const mark = n === 0 ? '<span style="opacity:0.4">' + n + '</span>' : n;
+      return `<span class="ct ${colors[d]}">${mark} ${d}</span>`;
+    }).join('');
   }
 
   // ═══ Actions ═════════════════════════════════════════════════════════

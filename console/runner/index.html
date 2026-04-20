@@ -147,6 +147,66 @@
     margin-left: 6px;
   }
 
+  /* Advanced drawer — <details>/<summary> styling (AR-037 P2) */
+  details.drawer {
+    margin-top: 12px;
+    background: #1a1d23;
+    border: 1px solid #2a2e36;
+    border-radius: 8px;
+    padding: 0;
+  }
+  details.drawer > summary {
+    cursor: pointer; user-select: none;
+    padding: 12px 16px;
+    font: 500 14px system-ui, sans-serif;
+    color: #8a8f98;
+    list-style: none;
+  }
+  details.drawer > summary::-webkit-details-marker { display: none; }
+  details.drawer > summary::before {
+    content: "▸ "; color: #5a5f68; font-size: 10px;
+  }
+  details.drawer[open] > summary::before { content: "▾ "; }
+  details.drawer[open] > summary { border-bottom: 1px solid #2a2e36; color: #e8eaed; }
+  details.drawer .drawer-section {
+    padding: 14px 16px;
+    border-bottom: 1px solid #22252b;
+  }
+  details.drawer .drawer-section:last-child { border-bottom: none; }
+  details.drawer h3 {
+    font: 600 12px system-ui, sans-serif;
+    color: #8a8f98;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin: 0 0 8px;
+  }
+
+  /* Queue section labels inside Queue card */
+  .queue-section-label {
+    font: 500 10px system-ui, sans-serif;
+    color: #8a8f98;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin: 12px 0 4px;
+  }
+  .queue-section-label:first-child { margin-top: 0; }
+
+  /* Queue counts badges */
+  .queue-counts {
+    display: flex; gap: 8px; flex-wrap: wrap;
+    font: 12px ui-monospace, monospace;
+  }
+  .queue-counts .ct {
+    padding: 4px 10px;
+    border-radius: 4px;
+    background: #1a1d23;
+    border: 1px solid #2a2e36;
+  }
+  .queue-counts .ct-pending { color: #64b5f6; }
+  .queue-counts .ct-claimed { color: #ffb74d; }
+  .queue-counts .ct-done    { color: #81c784; }
+  .queue-counts .ct-failed  { color: #e57373; }
+
   footer {
     margin-top: 20px; padding-top: 12px; border-top: 1px solid #2a2e36;
     font: 10px ui-monospace, monospace; color: #5a5f68; text-align: center;
@@ -157,26 +217,13 @@
   <header>
     <h1>ya-plan runner</h1>
     <div>
-      <div class="v" id="version">v2.4 · error handling + periodic reap</div>
+      <div class="v" id="version">v2.5 · 2-card + drawer</div>
       <div class="v" id="workerIdDisplay">…</div>
       <div class="v" id="pyodideState"></div>
     </div>
   </header>
 
-  <div class="card">
-    <h2>Anthropic API Key <span class="small" style="font-weight:normal">(optional)</span></h2>
-    <div class="row">
-      <span id="keyStatus" class="small">…</span>
-    </div>
-    <div class="row">
-      <button id="setKeyBtn">Set API key</button>
-      <button id="clearKeyBtn" class="danger" style="display:none">Clear key</button>
-    </div>
-    <div class="small" style="margin-top:6px">
-      Only needed for LLM-substrate jobs (dispatch to api.anthropic.com).
-      Compute jobs (Pyodide) run without a key.
-    </div>
-  </div>
+  <!-- ═══ PRIMARY CARDS (always visible) ═══════════════════════════════ -->
 
   <div class="card">
     <h2>Worker</h2>
@@ -188,30 +235,14 @@
       <button id="startBtn" class="primary">Start worker</button>
       <button id="stopBtn" style="display:none" class="danger">Stop worker</button>
     </div>
-    <div class="small" style="margin-top:6px">
-      Polls spawn-queue every 60s. Keeps tab open = worker alive.
-      Mobile browsers may throttle background tabs — keep this tab foreground for best response time.
-    </div>
-  </div>
 
-  <div class="card" id="pyodideCard">
-    <h2>Pyodide <span class="small" style="font-weight:normal">(compute engine)</span></h2>
-
-    <!-- IDLE / READY state: simple label -->
-    <div id="pyodideIdleBlock">
-      <div class="row">
-        <span class="small" id="pyodideInlineStatus">…</span>
-      </div>
-      <div class="row">
-        <button id="pyodidePrewarmBtn">⚡ Pre-warm Pyodide (~10MB)</button>
-      </div>
-      <div class="small" style="margin-top:6px">
-        Lazy-loaded on first compute job. Pre-warm to avoid the first-job wait.
-      </div>
+    <!-- Pyodide inline status (compact when idle/ready, hidden while loading) -->
+    <div id="pyodideIdleBlock" class="small" style="margin-top:8px">
+      <span id="pyodideInlineStatus">…</span>
     </div>
 
-    <!-- LOADING state: progress UI, hidden until load starts -->
-    <div id="pyodideLoadingBlock" style="display:none">
+    <!-- Pyodide loading progress (hidden unless actively loading) -->
+    <div id="pyodideLoadingBlock" style="display:none; margin-top:10px">
       <div class="loading-header">
         <span class="spinner"></span>
         <span class="loading-stage" id="pyodideStageLabel">starting…</span>
@@ -221,83 +252,115 @@
         <div class="progress-bar" id="pyodideProgressBar"></div>
       </div>
       <div class="small" id="pyodideHint" style="margin-top:6px">
-        First load fetches ~10MB. Subsequent loads are cached (fast).
+        Cached across sessions (Service Worker). Next reload is instant.
       </div>
       <div class="small" id="pyodideWarning" style="display:none; color:#ffb74d; margin-top:6px"></div>
     </div>
+
+    <!-- API key status inline (subtle, only surfaces if an LLM job fails for missing key) -->
+    <div class="small" id="keyStatus" style="margin-top:6px; color:#5a5f68">…</div>
   </div>
 
   <div class="card">
-    <h2>Pending queue</h2>
+    <h2>Queue</h2>
+    <div class="queue-counts" id="queueCounts">
+      <span class="ct ct-pending">— pending</span>
+      <span class="ct ct-claimed">— claimed</span>
+      <span class="ct ct-done">— done</span>
+      <span class="ct ct-failed">— failed</span>
+    </div>
+
+    <div class="queue-section-label" style="margin-top:12px">Pending</div>
     <div id="pendingQueue"><div class="small">…</div></div>
-    <div class="row" style="margin-top:8px">
+
+    <div class="queue-section-label">Recent (this session)</div>
+    <div id="recentJobs"><div class="small">no jobs yet</div></div>
+
+    <div class="row" style="margin-top:10px">
       <button id="refreshQueueBtn">↻ Refresh</button>
     </div>
   </div>
 
-  <div class="card">
-    <h2>Screen &amp; Battery</h2>
-    <div class="row">
-      <span class="small" id="wakeLockStatus">screen lock off</span>
-    </div>
-    <div class="row">
-      <button id="wakeLockToggleBtn">🔆 Keep screen on</button>
-    </div>
-    <div class="small" style="margin-top:6px">
-      Tab must stay visible for worker to poll. Drains battery.
-      Disable when done draining the queue.
-    </div>
-  </div>
+  <!-- ═══ ADVANCED DRAWER (collapsed by default) ═══════════════════════════ -->
 
-  <div class="card">
-    <h2>Auto-update</h2>
-    <div class="row">
-      <span class="small" id="updateStatus">up to date</span>
-    </div>
-    <div class="small" style="margin-top:6px">
-      Runner polls for new versions every 60s and auto-reloads on update.
-    </div>
-    <div class="row" style="margin-top:8px">
-      <button id="hardReloadBtn">⟳ Force reload (clear cache)</button>
-    </div>
-  </div>
+  <details class="drawer">
+    <summary>Advanced — API key · Pyodide prewarm · Screen · Update · Health · Feedback</summary>
 
-  <div class="card" id="healthCard">
-    <h2>Health check <span class="small" style="font-weight:normal">(browser capabilities)</span></h2>
-    <div class="row">
-      <button id="healthCheckBtn">Run checks</button>
-      <span class="small" id="healthSummary" style="flex:1">tap to run preflight</span>
+    <div class="drawer-section">
+      <h3>Anthropic API Key</h3>
+      <div class="row">
+        <button id="setKeyBtn">Set API key</button>
+        <button id="clearKeyBtn" class="danger" style="display:none">Clear key</button>
+      </div>
+      <div class="small" style="margin-top:6px">
+        Only needed for LLM-substrate jobs. Compute jobs (Pyodide) run without a key.
+      </div>
     </div>
-    <div id="healthResults" style="display:none; margin-top:8px; font: 11px ui-monospace, monospace;"></div>
-  </div>
 
-  <div class="card">
-    <h2>Feedback <span class="small" style="font-weight:normal">(to PM)</span></h2>
-    <div class="small" style="margin-bottom:8px">
-      Tap a button to send one-tap feedback. PM will read it next session.
-      Current runner state is auto-attached.
+    <div class="drawer-section">
+      <h3>Pyodide</h3>
+      <div class="row">
+        <button id="pyodidePrewarmBtn">⚡ Pre-warm Pyodide (~10MB)</button>
+      </div>
+      <div class="small" style="margin-top:6px">
+        Auto-loads on first compute job. Pre-warm to avoid first-job wait.
+      </div>
     </div>
-    <div class="row">
-      <button id="fb-ok" class="fb-btn">👍 Working</button>
-      <button id="fb-slow" class="fb-btn">🐌 Slow</button>
-      <button id="fb-broken" class="fb-btn">🐛 Broken</button>
-      <button id="fb-confused" class="fb-btn">🤔 Confused</button>
-    </div>
-    <div class="row" style="margin-top:6px">
-      <input id="fbNote" type="text" placeholder="Optional note (1 line)…" style="flex:1; background:#1a1d23; color:#e8eaed; border:1px solid #2a2e36; padding:6px 8px; border-radius:4px; font: 12px inherit;">
-    </div>
-    <div class="row" style="margin-top:6px">
-      <span class="small" id="fbStatus">no feedback sent yet</span>
-    </div>
-    <div class="row" style="margin-top:6px">
-      <button id="fbCopyBtn" style="font-size:11px">📋 Copy debug bundle</button>
-    </div>
-  </div>
 
-  <div class="card">
-    <h2>Recent jobs (this session)</h2>
-    <div id="recentJobs"><div class="small">no jobs yet</div></div>
-  </div>
+    <div class="drawer-section">
+      <h3>Screen &amp; Battery</h3>
+      <div class="row">
+        <span class="small" id="wakeLockStatus">screen lock off</span>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <button id="wakeLockToggleBtn">🔆 Keep screen on</button>
+      </div>
+      <div class="small" style="margin-top:6px">
+        Tab must stay visible for worker to poll. Drains battery.
+      </div>
+    </div>
+
+    <div class="drawer-section">
+      <h3>Auto-update</h3>
+      <div class="row">
+        <span class="small" id="updateStatus">up to date</span>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <button id="hardReloadBtn">⟳ Force reload (clear cache)</button>
+      </div>
+    </div>
+
+    <div class="drawer-section">
+      <h3>Health check</h3>
+      <div class="row">
+        <button id="healthCheckBtn">Run checks</button>
+        <span class="small" id="healthSummary" style="flex:1">tap to run preflight</span>
+      </div>
+      <div id="healthResults" style="display:none; margin-top:8px; font: 11px ui-monospace, monospace;"></div>
+    </div>
+
+    <div class="drawer-section">
+      <h3>Feedback to PM</h3>
+      <div class="small" style="margin-bottom:8px">
+        State snapshot auto-attached. Tap a button to commit a feedback event.
+      </div>
+      <div class="row">
+        <button id="fb-ok" class="fb-btn">👍 Working</button>
+        <button id="fb-slow" class="fb-btn">🐌 Slow</button>
+        <button id="fb-broken" class="fb-btn">🐛 Broken</button>
+        <button id="fb-confused" class="fb-btn">🤔 Confused</button>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <input id="fbNote" type="text" placeholder="Optional note (1 line)…" style="flex:1; background:#1a1d23; color:#e8eaed; border:1px solid #2a2e36; padding:6px 8px; border-radius:4px; font: 12px inherit;">
+      </div>
+      <div class="row" style="margin-top:6px">
+        <span class="small" id="fbStatus">no feedback sent yet</span>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <button id="fbCopyBtn" style="font-size:11px">📋 Copy debug bundle</button>
+      </div>
+    </div>
+  </details>
 
   <footer>
     <a href="../">← console</a> ·
