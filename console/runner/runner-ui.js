@@ -315,16 +315,16 @@
   // ═══ Actions ═════════════════════════════════════════════════════════
 
   async function onStartWorker() {
-    const apiKey = loadApiKey();
-    if (!apiKey) {
-      alert('Anthropic API key required. Tap "Set API key" first.');
-      return;
-    }
     const pat = getPat();
     if (!pat) {
       alert('GitHub PAT required. Connect via the main console page first.');
       return;
     }
+    // API key is NOT required to start the worker. Compute-substrate jobs
+    // run locally in Pyodide and need no Anthropic key. LLM-substrate jobs
+    // will fail with a clear error ("No Anthropic API key available") if
+    // one arrives in the queue without a key being set — at which point
+    // the user can set it and the worker will retry on the next poll.
 
     const workerId = getOrCreateWorkerId();
     worker = window.queueWorker.startWorker({
@@ -467,9 +467,10 @@
     if (window._pyodideRender) clearInterval(window._pyodideRender);
     window._pyodideRender = setInterval(renderPyodideState, 2000);
 
-    // Auto-start if user previously enabled
+    // Auto-start if user previously enabled (API key NOT required —
+    // compute-substrate jobs can run without it)
     const autoStart = localStorage.getItem(CFG.WORKER_ENABLED_STORAGE_KEY);
-    if (autoStart && loadApiKey() && getPat()) {
+    if (autoStart && getPat()) {
       onStartWorker();
     }
   }

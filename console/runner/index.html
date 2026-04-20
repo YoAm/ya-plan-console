@@ -107,20 +107,24 @@
   <header>
     <h1>ya-plan runner</h1>
     <div>
-      <div class="v" id="version">v1.3 · model fix</div>
+      <div class="v" id="version">v1.4 · key optional</div>
       <div class="v" id="workerIdDisplay">…</div>
       <div class="v" id="pyodideState"></div>
     </div>
   </header>
 
   <div class="card">
-    <h2>Anthropic API Key</h2>
+    <h2>Anthropic API Key <span class="small" style="font-weight:normal">(optional)</span></h2>
     <div class="row">
       <span id="keyStatus" class="small">…</span>
     </div>
     <div class="row">
       <button id="setKeyBtn">Set API key</button>
       <button id="clearKeyBtn" class="danger" style="display:none">Clear key</button>
+    </div>
+    <div class="small" style="margin-top:6px">
+      Only needed for LLM-substrate jobs (dispatch to api.anthropic.com).
+      Compute jobs (Pyodide) run without a key.
     </div>
   </div>
 

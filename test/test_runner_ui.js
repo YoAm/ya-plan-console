@@ -176,3 +176,10 @@ runTests().then(r => process.exit(r.failed > 0 ? 1 : 0)).catch(e => {
   console.error('Harness error:', e);
   process.exit(2);
 });
+
+// NOTE: the existing harness tests with an API key set. The asymmetric-gate
+// fix (worker starts without API key for compute jobs) isn't directly
+// tested here because startBtn is the same click handler either way. A
+// proper test would clear localStorage api_key_v1 before click, re-run,
+// assert no alert and badge still transitions off→IDLE. Deferred to
+// Playwright suite.
