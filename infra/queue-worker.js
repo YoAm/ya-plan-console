@@ -362,13 +362,40 @@
             const failedPath = `${paths.failed}/${filename}`.replace(/\/\//g, '/');
             const failedContent = jobText.replace(/\n*$/, '\n') +
               '\n// failed: ' + String(e.message).slice(0, 300) + '\n';
-            await moveJob(
-              claimedPath, claimedEntry.sha, failedPath, failedContent,
-              `failed: ${job.ruling_id}`
-            );
+            // Retry up to 3 times — GitHub API occasionally 409's on rapid writes.
+            let lastErr = null;
+            for (let attempt = 1; attempt <= 3; attempt++) {
+              try {
+                await moveJob(
+                  claimedPath, claimedEntry.sha, failedPath, failedContent,
+                  `failed: ${job.ruling_id}`
+                );
+                lastErr = null;
+                break;
+              } catch (me) {
+                lastErr = me;
+                if (attempt < 3) await new Promise(r => setTimeout(r, 800 * attempt));
+              }
+            }
+            if (lastErr) throw lastErr;  // surface to outer catch
+          } else {
+            await status.append('failed_move_skipped', {
+              reason: 'claimed entry not found in GitHub dir listing',
+              filename,
+            }).catch(() => {});
           }
         } catch (moveErr) {
           console.warn('failed-state move failed', moveErr);
+          // Record to telemetry so we see this in runner-status/. Without this
+          // log, a silent move failure looks identical to 'tab closed before
+          // move completed' and job stays in claimed/ forever, visible only
+          // to the stale-claim reaper 10 minutes later.
+          await status.append('failed_move_error', {
+            worker_id: workerId,
+            err_name: moveErr.name,
+            err_message: String(moveErr.message).slice(0, 300),
+            http_status: moveErr.httpStatus,
+          }).catch(() => {});
         }
       } finally {
         await status.close().catch(() => {});
@@ -377,9 +404,21 @@
       }
     };
 
+    // Throttle poll rate when tab backgrounded. Don't stop entirely —
+    // mobile Chrome keeps SW + JS alive for a while after screen off, which
+    // is enough to drain a queue overnight if Wake Lock is on. If we stopped
+    // polling entirely, a single hung job would strand the rest of the queue.
+    let lastHiddenPoll = 0;
+    const HIDDEN_POLL_INTERVAL_MS = 30000;  // 30s when tab hidden vs pollIntervalMs when visible
+
     const pollTick = async () => {
       if (stopped || state !== 'idle') return;
-      if (document.visibilityState === 'hidden') return;  // skip while tab hidden
+      // When tab hidden, throttle — but still poll periodically
+      if (document.visibilityState === 'hidden') {
+        const now = Date.now();
+        if (now - lastHiddenPoll < HIDDEN_POLL_INTERVAL_MS) return;
+        lastHiddenPoll = now;
+      }
 
       setState('polling');
       try {
@@ -459,10 +498,21 @@
       pollTick().catch(() => {});
     }, 1000);
 
+    // Also run the reaper periodically (every 5 min). Without this, jobs that
+    // get stuck in claimed/ mid-session (crashed tab, network failure during
+    // move) stay stuck until the next worker restart. Periodic reaping means
+    // the queue self-heals within ~10min no matter what goes wrong.
+    const REAPER_INTERVAL_MS = 5 * 60 * 1000;
+    let reaperTimer = setInterval(() => {
+      if (stopped) return;
+      reapStaleClaims().catch(e => console.warn('periodic reap failed', e));
+    }, REAPER_INTERVAL_MS);
+
     return {
       stop: () => {
         stopped = true;
         if (pollTimer) clearInterval(pollTimer);
+        if (reaperTimer) clearInterval(reaperTimer);
         if (abortController) abortController.abort();
         setState('stopped');
       },
