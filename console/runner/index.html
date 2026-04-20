@@ -135,6 +135,11 @@
     100% { background-position: -100% 0; }
   }
 
+  /* Feedback buttons */
+  .fb-btn {
+    padding: 6px 10px; font-size: 12px;
+  }
+
   /* Worker progress — in-flight job elapsed time */
   .job-elapsed {
     font: 10px ui-monospace, monospace; color: #64b5f6;
@@ -152,7 +157,7 @@
   <header>
     <h1>ya-plan runner</h1>
     <div>
-      <div class="v" id="version">v1.8 · live progress</div>
+      <div class="v" id="version">v1.9 · feedback loop</div>
       <div class="v" id="workerIdDisplay">…</div>
       <div class="v" id="pyodideState"></div>
     </div>
@@ -258,6 +263,29 @@
   </div>
 
   <div class="card">
+    <h2>Feedback <span class="small" style="font-weight:normal">(to PM)</span></h2>
+    <div class="small" style="margin-bottom:8px">
+      Tap a button to send one-tap feedback. PM will read it next session.
+      Current runner state is auto-attached.
+    </div>
+    <div class="row">
+      <button id="fb-ok" class="fb-btn">👍 Working</button>
+      <button id="fb-slow" class="fb-btn">🐌 Slow</button>
+      <button id="fb-broken" class="fb-btn">🐛 Broken</button>
+      <button id="fb-confused" class="fb-btn">🤔 Confused</button>
+    </div>
+    <div class="row" style="margin-top:6px">
+      <input id="fbNote" type="text" placeholder="Optional note (1 line)…" style="flex:1; background:#1a1d23; color:#e8eaed; border:1px solid #2a2e36; padding:6px 8px; border-radius:4px; font: 12px inherit;">
+    </div>
+    <div class="row" style="margin-top:6px">
+      <span class="small" id="fbStatus">no feedback sent yet</span>
+    </div>
+    <div class="row" style="margin-top:6px">
+      <button id="fbCopyBtn" style="font-size:11px">📋 Copy debug bundle</button>
+    </div>
+  </div>
+
+  <div class="card">
     <h2>Recent jobs (this session)</h2>
     <div id="recentJobs"><div class="small">no jobs yet</div></div>
   </div>
@@ -277,6 +305,8 @@
   <script src="../../infra/compute-executor.js"></script>
   <script src="../../infra/queue-status.js"></script>
   <script src="../../infra/queue-worker.js"></script>
+  <!-- Telemetry (from parent console/ — shared origin) -->
+  <script src="../telemetry.js"></script>
   <!-- Consumer wiring -->
   <script src="../config.js"></script>
   <script src="./config.js"></script>

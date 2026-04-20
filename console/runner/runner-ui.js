@@ -7,6 +7,15 @@
   const CFG = window.runnerConfig;
   const CCFG = window.consoleConfig;
 
+  // ═══ Telemetry helper ═══════════════════════════════════════════════
+  // window.telemetry is loaded by console/telemetry.js (imported in index.html).
+  // Fail gracefully if absent (e.g., future standalone runner deployment).
+  function tlog(name, attrs) {
+    try {
+      if (window.telemetry?.log) window.telemetry.log('runner.' + name, attrs || {});
+    } catch (_) { /* swallow */ }
+  }
+
   // ═══ CSP violation telemetry ═════════════════════════════════════════
   // Catches any CSP violation at runtime (inline script we missed, blob:,
   // unexpected eval, etc). We log to console + localStorage for dev visibility;
@@ -25,11 +34,16 @@
     try {
       const existing = JSON.parse(localStorage.getItem(CSP_VIOLATIONS_KEY) || '[]');
       existing.push(entry);
-      // Cap at last 50 to avoid unbounded growth
       const trimmed = existing.slice(-50);
       localStorage.setItem(CSP_VIOLATIONS_KEY, JSON.stringify(trimmed));
     } catch (_) { /* localStorage full or JSON parse failure — ignore */ }
     console.warn('[CSP violation]', entry);
+    tlog('csp_violation', {
+      blockedURI: entry.blockedURI,
+      violatedDirective: entry.violatedDirective,
+      sourceFile: entry.sourceFile,
+      lineNumber: entry.lineNumber,
+    });
   });
 
   // ═══ Auto-update (AR-034) ════════════════════════════════════════════
@@ -349,6 +363,7 @@
     // the user can set it and the worker will retry on the next poll.
 
     const workerId = getOrCreateWorkerId();
+    tlog('worker_start', { workerId });
     worker = window.queueWorker.startWorker({
       pat,
       dataRepo: CFG.DATA_REPO,
@@ -358,6 +373,13 @@
       workerId,
       onStateChange: (state, jobPath, detail) => {
         renderWorkerState();
+        // Telemetry: every state transition becomes an event
+        tlog('job_state', {
+          state,
+          ruling_id: detail?.ruling_id,
+          mode: detail?.mode,
+          lastState: detail?.lastState,
+        });
         // Only push ONE entry per job, at the first transition out of polling.
         // Subsequent state transitions (dispatching, committing) mutate the
         // existing entry, not create a new one.
@@ -398,6 +420,7 @@
   }
 
   function onStopWorker() {
+    tlog('worker_stop', {});
     if (worker) {
       worker.stop();
       worker = null;
@@ -478,6 +501,94 @@
     }
   }
 
+  // ═══ Feedback ════════════════════════════════════════════════════════
+  // One-tap feedback that writes an event to ya-plan/events/ with full
+  // runner state snapshot. PM reads next session to know what you saw.
+
+  async function sendFeedback(tag) {
+    const note = ($('fbNote').value || '').trim().slice(0, 500);
+    const pat = getPat();
+    if (!pat) {
+      $('fbStatus').textContent = 'no GitHub PAT — connect via main console first';
+      $('fbStatus').className = 'err';
+      return;
+    }
+    $('fbStatus').textContent = 'sending…';
+    $('fbStatus').className = 'warn';
+
+    // Snapshot current state
+    const pyodideState = window.pyodideLoader?.status?.() || {};
+    const workerState = worker?.status?.() || { state: 'not-started' };
+    const ua = navigator.userAgent.slice(0, 200);
+
+    const now = new Date();
+    const ts = now.toISOString();
+    const slug = ts.replace(/[:.]/g, '').slice(0, 15) + 'Z_feedback_' + tag;
+    const bodyLines = [
+      '---',
+      `type: runner_feedback`,
+      `tag: ${tag}`,
+      `ts: ${ts}`,
+      `note: ${JSON.stringify(note)}`,
+      `ua: ${JSON.stringify(ua)}`,
+      '---',
+      '',
+      `# Runner feedback: ${tag}`,
+      '',
+      `**Note**: ${note || '(none)'}`,
+      '',
+      '## State snapshot',
+      '',
+      '### Pyodide',
+      '```json',
+      JSON.stringify(pyodideState, null, 2),
+      '```',
+      '',
+      '### Worker',
+      '```json',
+      JSON.stringify(workerState, null, 2),
+      '```',
+      '',
+      '### Recent jobs (this session)',
+      '```json',
+      JSON.stringify(recentJobs.slice(-10), null, 2),
+      '```',
+      '',
+      '### CSP violations (last 5)',
+      '```json',
+      (() => {
+        try {
+          const v = JSON.parse(localStorage.getItem(CSP_VIOLATIONS_KEY) || '[]');
+          return JSON.stringify(v.slice(-5), null, 2);
+        } catch (_) { return '[]'; }
+      })(),
+      '```',
+      '',
+      '### Runner UI version',
+      '```',
+      document.getElementById('version')?.textContent || 'unknown',
+      '```',
+    ];
+    const body = bodyLines.join('\n');
+    const path = `events/${slug}.md`;
+
+    try {
+      await window.ghApi.ghPut(
+        path, window.ghApi.toBase64(body),
+        `feedback: ${tag} from runner UI`,
+        { pat, ...CFG.DATA_REPO, sha: null }
+      );
+      tlog('feedback_sent', { tag, note_len: note.length });
+      $('fbStatus').textContent = `✓ sent: ${path.split('/').pop()}`;
+      $('fbStatus').className = 'ok';
+      $('fbNote').value = '';
+    } catch (e) {
+      tlog('feedback_failed', { tag, err: String(e.message).slice(0, 200) });
+      $('fbStatus').textContent = `✗ failed: ${String(e.message).slice(0, 80)}`;
+      $('fbStatus').className = 'err';
+    }
+  }
+
   // ═══ Init ════════════════════════════════════════════════════════════
 
   function init() {
@@ -489,20 +600,56 @@
     const wakeLockBtn = $('wakeLockToggleBtn');
     if (wakeLockBtn) wakeLockBtn.addEventListener('click', toggleWakeLock);
 
+    // Feedback buttons
+    const fbMap = { 'fb-ok': 'ok', 'fb-slow': 'slow', 'fb-broken': 'broken', 'fb-confused': 'confused' };
+    for (const [id, tag] of Object.entries(fbMap)) {
+      const btn = $(id);
+      if (btn) btn.addEventListener('click', () => sendFeedback(tag));
+    }
+    const fbCopyBtn = $('fbCopyBtn');
+    if (fbCopyBtn) fbCopyBtn.addEventListener('click', async () => {
+      const bundle = {
+        ts: new Date().toISOString(),
+        version: document.getElementById('version')?.textContent || 'unknown',
+        ua: navigator.userAgent,
+        pyodide: window.pyodideLoader?.status?.() || null,
+        worker: worker?.status?.() || { state: 'not-started' },
+        recentJobs: recentJobs.slice(-10),
+        cspViolations: (() => {
+          try { return JSON.parse(localStorage.getItem(CSP_VIOLATIONS_KEY) || '[]').slice(-10); }
+          catch { return []; }
+        })(),
+      };
+      const text = JSON.stringify(bundle, null, 2);
+      try {
+        await navigator.clipboard.writeText(text);
+        fbCopyBtn.textContent = '✓ copied';
+        setTimeout(() => { fbCopyBtn.textContent = '📋 Copy debug bundle'; }, 2000);
+      } catch (e) {
+        // Clipboard API may fail without user gesture permission; show in dialog
+        prompt('Copy this debug bundle:', text.slice(0, 2000));
+      }
+    });
+
     const prewarmBtn = $('pyodidePrewarmBtn');
     if (prewarmBtn) prewarmBtn.addEventListener('click', async () => {
+      const startMs = Date.now();
+      tlog('pyodide_prewarm_start', {});
       prewarmBtn.disabled = true;
       prewarmBtn.textContent = 'loading…';
       try {
         await window.pyodideLoader.ensurePyodide({
           onProgress: (stage) => {
             prewarmBtn.textContent = `loading: ${stage}`;
+            tlog('pyodide_stage', { stage, elapsed_ms: Date.now() - startMs });
           },
         });
         prewarmBtn.textContent = '✓ loaded';
+        tlog('pyodide_prewarm_ok', { ms: Date.now() - startMs });
       } catch (e) {
         prewarmBtn.textContent = `✗ ${e.message.slice(0, 30)}`;
         prewarmBtn.disabled = false;
+        tlog('pyodide_prewarm_error', { ms: Date.now() - startMs, err: String(e.message).slice(0, 200) });
       }
       renderPyodideState();
     });

@@ -131,6 +131,14 @@ async function runTests() {
   assert(!!startBtn, 'startBtn element exists');
   assert(!!clearKeyBtn, 'clearKeyBtn element exists');
 
+  // AR-036 feedback buttons
+  const fbOk = doc.getElementById('fb-ok');
+  const fbCopy = doc.getElementById('fbCopyBtn');
+  const prewarm = doc.getElementById('pyodidePrewarmBtn');
+  assert(!!fbOk, 'fb-ok feedback button exists');
+  assert(!!fbCopy, 'fbCopyBtn copy-bundle button exists');
+  assert(!!prewarm, 'pyodidePrewarmBtn pre-warm button exists');
+
   // Count listeners attached (jsdom lets us inspect) — note jsdom tracks internally;
   // simplest test is to click and see if the handler body runs.
   // We intercept console.log / errors to detect side-effects.
