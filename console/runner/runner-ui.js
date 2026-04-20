@@ -392,10 +392,32 @@
       $('setKeyBtn').textContent = 'Rotate API key';
       $('clearKeyBtn').style.display = '';
     } catch (e) {
-      const msg = e.httpStatus === 401 ? 'invalid key (401)' :
-                  e.httpStatus ? `HTTP ${e.httpStatus}` : e.message;
+      // Show detailed error so user can debug (and file a bug if it's our fault).
+      // For 400: parse the response body JSON for error.message if possible.
+      let msg;
+      if (e.httpStatus === 401) {
+        msg = 'invalid key (401): check that key starts with sk-ant-';
+      } else if (e.httpStatus === 400) {
+        let detail = '';
+        try {
+          const parsed = JSON.parse(e.body || '{}');
+          detail = parsed.error?.message || '';
+        } catch (_) {
+          detail = (e.body || '').slice(0, 200);
+        }
+        msg = `400 Bad Request: ${detail || 'check model name in config'}`;
+      } else if (e.httpStatus === 429) {
+        msg = '429 rate limit; try again in a minute';
+      } else if (e.httpStatus) {
+        msg = `HTTP ${e.httpStatus}: ${(e.body || '').slice(0, 150)}`;
+      } else {
+        // Network error (CORS, no connectivity, etc.)
+        msg = `network: ${e.message}`;
+      }
       $('keyStatus').textContent = '✗ ' + msg;
       $('keyStatus').className = 'err';
+      $('keyStatus').title = msg;  // hover tooltip with full message
+      console.error('[validateKey]', e);
     }
   }
 

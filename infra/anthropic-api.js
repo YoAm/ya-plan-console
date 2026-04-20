@@ -88,10 +88,12 @@
   // Lightweight validation ping — 1-token request to verify key works.
   // Returns true on success, throws on failure (same error shape as dispatch).
   async function validateKey({ apiKey, model }) {
+    // Uses 10 max_tokens (some API validation paths reject 1)
+    // and a minimal prompt.
     await dispatch({
       apiKey,
       model,
-      maxTokens: 1,
+      maxTokens: 10,
       messages: [{ role: 'user', content: 'ok' }],
     });
     return true;

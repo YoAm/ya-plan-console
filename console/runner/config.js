@@ -8,13 +8,16 @@ window.runnerConfig = {
   // Worker instance identifier (generated once, stable across reloads)
   WORKER_ID_STORAGE_KEY: 'yp_worker_id_v1',
 
-  // Default model + token settings
-  DEFAULT_MODEL: 'claude-sonnet-4-20250514',
+  // Default model + token settings (current models as of April 2026)
+  // Updated 2026-04-20: claude-sonnet-4-20250514 was DEPRECATED; use -4-6 / -4-7.
+  DEFAULT_MODEL: 'claude-sonnet-4-6',
   DEFAULT_MAX_TOKENS: 8192,
   AVAILABLE_MODELS: [
-    'claude-sonnet-4-20250514',
-    'claude-opus-4-20250514',
-    'claude-3-5-sonnet-20241022',
+    'claude-opus-4-7',
+    'claude-opus-4-6',
+    'claude-sonnet-4-6',
+    'claude-sonnet-4-5',
+    'claude-haiku-4-5',
   ],
 
   // Poll cadence — 60s is conservative; 30s if you want snappier pickup
