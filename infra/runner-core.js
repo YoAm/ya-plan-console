@@ -62,6 +62,14 @@
       const path = m[1].trim();
       const content = m[2];
       if (!path) continue;
+      // Path-traversal guard: reject '..' segments and absolute paths
+      // regardless of prefix allowlist. Prefix allowlist is starts-with;
+      // 'viewer/../secrets' would pass startsWith('viewer/') without this.
+      if (path.split('/').some(seg => seg === '..') || path.startsWith('/')) {
+        const err = new Error(`Path '${path}' contains '..' or is absolute`);
+        err.disallowedPath = path;
+        throw err;
+      }
       if (allowedPathPrefixes && allowedPathPrefixes.length > 0) {
         const allowed = allowedPathPrefixes.some(p => path.startsWith(p));
         if (!allowed) {
@@ -120,7 +128,9 @@
   // Convention: ENRP_<ruling_id>_<ISO timestamp compressed>.md
   function enrpFilename(rulingId, ts) {
     const t = ts || new Date();
-    const iso = t.toISOString().replace(/[:.]/g, '').slice(0, 15) + 'Z';
+    // Strip ':' and '.' from ISO, take YYYY-MM-DDTHHMMSS (17 chars), append 'Z'.
+    // Result: ENRP_<id>_2026-04-20T123456Z.md
+    const iso = t.toISOString().replace(/[:.]/g, '').slice(0, 17) + 'Z';
     return `ENRP_${rulingId}_${iso}.md`;
   }
 

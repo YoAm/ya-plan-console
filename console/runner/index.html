@@ -107,7 +107,7 @@
   <header>
     <h1>ya-plan runner</h1>
     <div>
-      <div class="v" id="version">v1.1 · AR-030</div>
+      <div class="v" id="version">v1.2 · AR-033/034/035</div>
       <div class="v" id="workerIdDisplay">…</div>
       <div class="v" id="pyodideState"></div>
     </div>
@@ -145,6 +145,30 @@
     <div id="pendingQueue"><div class="small">…</div></div>
     <div class="row" style="margin-top:8px">
       <button id="refreshQueueBtn">↻ Refresh</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Screen &amp; Battery</h2>
+    <div class="row">
+      <span class="small" id="wakeLockStatus">screen lock off</span>
+    </div>
+    <div class="row">
+      <button id="wakeLockToggleBtn">🔆 Keep screen on</button>
+    </div>
+    <div class="small" style="margin-top:6px">
+      Tab must stay visible for worker to poll. Drains battery.
+      Disable when done draining the queue.
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Auto-update</h2>
+    <div class="row">
+      <span class="small" id="updateStatus">up to date</span>
+    </div>
+    <div class="small" style="margin-top:6px">
+      Runner polls for new versions every 60s and auto-reloads on update.
     </div>
   </div>
 

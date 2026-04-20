@@ -7,6 +7,168 @@
   const CFG = window.runnerConfig;
   const CCFG = window.consoleConfig;
 
+  // ═══ CSP violation telemetry ═════════════════════════════════════════
+  // Catches any CSP violation at runtime (inline script we missed, blob:,
+  // unexpected eval, etc). We log to console + localStorage for dev visibility;
+  // telemetry integration comes when console/telemetry.js is graduated to infra.
+  const CSP_VIOLATIONS_KEY = 'yp_csp_violations_v1';
+  document.addEventListener('securitypolicyviolation', (e) => {
+    const entry = {
+      ts: new Date().toISOString(),
+      blockedURI: e.blockedURI,
+      violatedDirective: e.violatedDirective,
+      effectiveDirective: e.effectiveDirective,
+      sourceFile: e.sourceFile,
+      lineNumber: e.lineNumber,
+      sample: (e.sample || '').slice(0, 200),
+    };
+    try {
+      const existing = JSON.parse(localStorage.getItem(CSP_VIOLATIONS_KEY) || '[]');
+      existing.push(entry);
+      // Cap at last 50 to avoid unbounded growth
+      const trimmed = existing.slice(-50);
+      localStorage.setItem(CSP_VIOLATIONS_KEY, JSON.stringify(trimmed));
+    } catch (_) { /* localStorage full or JSON parse failure — ignore */ }
+    console.warn('[CSP violation]', entry);
+  });
+
+  // ═══ Auto-update (AR-034) ════════════════════════════════════════════
+  // Runner polls for SW updates every 60s; on controllerchange, auto-reloads.
+  // Console keeps user-confirm behavior; runner is more aggressive because
+  // losing an in-flight compute job is cheaper than stale-UI confusion.
+  let updatePollTimer = null;
+  let reloadScheduled = false;
+
+  async function checkForUpdate() {
+    if (!navigator.serviceWorker || !navigator.serviceWorker.getRegistration) return;
+    try {
+      const reg = await navigator.serviceWorker.getRegistration();
+      if (reg) await reg.update();
+    } catch (e) {
+      // Silent — update failures are non-fatal
+    }
+  }
+
+  function setupAutoUpdate() {
+    if (!navigator.serviceWorker) return;
+
+    // Register SW if not already (console's index.html does this; runner
+    // subpath inherits same SW via same-origin scope).
+    // Trigger reload when new SW takes over
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (reloadScheduled) return;
+      reloadScheduled = true;
+      const el = document.getElementById('updateStatus');
+      if (el) { el.textContent = 'new version → reloading in 2s…'; el.className = 'warn'; }
+      // Small delay so user sees the status, then reload
+      setTimeout(() => location.reload(), 2000);
+    });
+
+    // Poll every 60s
+    if (updatePollTimer) clearInterval(updatePollTimer);
+    updatePollTimer = setInterval(checkForUpdate, 60000);
+    // Also check immediately
+    setTimeout(checkForUpdate, 3000);
+  }
+
+  function renderUpdateStatus() {
+    const el = document.getElementById('updateStatus');
+    if (!el) return;
+    if (reloadScheduled) {
+      el.textContent = 'new version → reloading…';
+      el.className = 'warn';
+    } else if (!navigator.serviceWorker) {
+      el.textContent = 'no service worker (unsupported browser)';
+      el.className = 'err';
+    } else {
+      el.textContent = 'up to date (auto-polling every 60s)';
+      el.className = 'small';
+    }
+  }
+
+  // ═══ Wake Lock (AR-035) ══════════════════════════════════════════════
+  // Screen Wake Lock: prevents device sleep while runner is draining.
+  // HONEST LIMITS: only keeps screen awake; does NOT prevent tab background
+  // suspension if user switches apps. Tab must remain foreground.
+  let wakeLockSentinel = null;
+  let wakeLockIntent = false;  // user wants it; re-acquire on visibility
+
+  async function requestWakeLock() {
+    if (!('wakeLock' in navigator)) {
+      alert('Wake Lock API not supported in this browser.');
+      return false;
+    }
+    try {
+      wakeLockSentinel = await navigator.wakeLock.request('screen');
+      wakeLockSentinel.addEventListener('release', () => {
+        wakeLockSentinel = null;
+        renderWakeLockStatus();
+      });
+      wakeLockIntent = true;
+      renderWakeLockStatus();
+      return true;
+    } catch (e) {
+      alert('Wake Lock failed: ' + e.message);
+      return false;
+    }
+  }
+
+  async function releaseWakeLock() {
+    wakeLockIntent = false;
+    if (wakeLockSentinel) {
+      try { await wakeLockSentinel.release(); } catch (_) {}
+      wakeLockSentinel = null;
+    }
+    renderWakeLockStatus();
+  }
+
+  function renderWakeLockStatus() {
+    const statusEl = document.getElementById('wakeLockStatus');
+    const btn = document.getElementById('wakeLockToggleBtn');
+    if (!statusEl || !btn) return;
+    if (!('wakeLock' in navigator)) {
+      statusEl.textContent = '⚠ not supported in this browser';
+      statusEl.className = 'err';
+      btn.disabled = true;
+      btn.textContent = 'unsupported';
+      return;
+    }
+    btn.disabled = false;
+    if (wakeLockSentinel) {
+      statusEl.textContent = '🔆 screen lock ACTIVE';
+      statusEl.className = 'ok';
+      btn.textContent = 'Release screen lock';
+      btn.className = 'danger';
+    } else {
+      statusEl.textContent = 'screen lock off';
+      statusEl.className = 'small';
+      btn.textContent = '🔆 Keep screen on';
+      btn.className = '';
+    }
+  }
+
+  async function toggleWakeLock() {
+    if (wakeLockSentinel) {
+      await releaseWakeLock();
+    } else {
+      await requestWakeLock();
+    }
+  }
+
+  // Re-acquire wake lock on visibility change if user wanted it
+  document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState === 'visible' && wakeLockIntent && !wakeLockSentinel) {
+      try {
+        wakeLockSentinel = await navigator.wakeLock.request('screen');
+        wakeLockSentinel.addEventListener('release', () => {
+          wakeLockSentinel = null;
+          renderWakeLockStatus();
+        });
+        renderWakeLockStatus();
+      } catch (_) { /* browser may reject after background; swallow */ }
+    }
+  });
+
   const $ = (id) => document.getElementById(id);
 
   function esc(s) {
@@ -270,11 +432,16 @@
     $('startBtn').addEventListener('click', onStartWorker);
     $('stopBtn').addEventListener('click', onStopWorker);
     $('refreshQueueBtn').addEventListener('click', renderPendingQueue);
+    const wakeLockBtn = $('wakeLockToggleBtn');
+    if (wakeLockBtn) wakeLockBtn.addEventListener('click', toggleWakeLock);
 
     $('workerIdDisplay').textContent = getOrCreateWorkerId();
     updateKeyStatus();
     renderWorkerState();
     renderPendingQueue();
+    renderWakeLockStatus();
+    renderUpdateStatus();
+    setupAutoUpdate();
     if (window._pyodideRender) clearInterval(window._pyodideRender);
     window._pyodideRender = setInterval(renderPyodideState, 2000);
 

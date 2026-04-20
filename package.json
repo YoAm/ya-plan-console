@@ -1,0 +1,13 @@
+{
+  "devDependencies": {
+    "jsdom": "^29.0.2"
+  },
+  "name": "ya-plan-console",
+  "version": "2.3.0",
+  "private": true,
+  "scripts": {
+    "test": "node test/test_csp.js && node test/test_runner_core.js && node test/test_compute_executor.js && node test/test_runner_ui.js",
+    "test:fast": "node test/test_csp.js && node test/test_runner_core.js && node test/test_compute_executor.js",
+    "test:ui": "node test/test_runner_ui.js"
+  }
+}
