@@ -388,22 +388,76 @@
           setState('idle');
           return;
         }
-        const claim = await claimJob(jobs[0]);
-        if (!claim) {
-          setState('idle');
-          return;
+        // Try each pending job in order. If one claim fails (e.g. file
+        // already exists in claimed/ from a half-complete atomic move),
+        // skip to the next. Don't let one stuck job halt the whole queue.
+        for (const entry of jobs) {
+          if (stopped) break;
+          const claim = await claimJob(entry);
+          if (claim) {
+            await processJob(claim);
+            return;  // processed one; next tick handles the rest
+          }
+          // claim failed — try next job
         }
-        await processJob(claim);
+        setState('idle');
       } catch (e) {
         console.warn('poll tick error', e);
         setState('idle');
       }
     };
 
-    // Start polling
-    pollTimer = setInterval(pollTick, pollIntervalMs);
-    // Immediate first poll after a short delay (allow UI to render)
-    setTimeout(() => { pollTick().catch(() => {}); }, 1000);
+    // Stale-claim reaper: on worker startup, scan claimed/ for jobs with
+    // no recent heartbeat and move them back to pending/ so they can be
+    // re-processed. 'Recent' = last status.jsonl event within STALE_MS.
+    const STALE_MS = 10 * 60 * 1000;  // 10 minutes
+    const reapStaleClaims = async () => {
+      try {
+        const claimed = await ghDir(paths.claimed);
+        if (!Array.isArray(claimed) || claimed.length === 0) return;
+        const now = Date.now();
+        for (const entry of claimed) {
+          if (entry.type !== 'file' || !entry.name.endsWith('.json')) continue;
+          // Check corresponding status.jsonl for last event timestamp
+          const statusName = entry.name.replace(/\.json$/, '.jsonl');
+          const statusPath = `${paths.status}/${statusName}`.replace(/\/\//g, '/');
+          let lastEventMs = 0;
+          try {
+            const statusText = await ghRaw(statusPath, dataRepo);
+            const lines = statusText.trim().split('\n').filter(Boolean);
+            if (lines.length > 0) {
+              const last = JSON.parse(lines[lines.length - 1]);
+              if (last.ts) lastEventMs = new Date(last.ts).getTime();
+            }
+          } catch (_) { /* no status file = never started */ }
+          if (lastEventMs > 0 && (now - lastEventMs) < STALE_MS) {
+            continue;  // recent activity, not stale
+          }
+          // Move claimed/ → pending/
+          const claimedPath = `${paths.claimed}/${entry.name}`.replace(/\/\//g, '/');
+          const pendingPath = `${paths.pending}/${entry.name}`.replace(/\/\//g, '/');
+          try {
+            const jobText = await ghRaw(claimedPath, dataRepo);
+            await moveJob(
+              claimedPath, entry.sha, pendingPath, jobText,
+              `reap stale claim: ${entry.name} (worker ${workerId})`
+            );
+            console.log('[reaper] moved stale', entry.name, 'back to pending');
+          } catch (e) {
+            console.warn('[reaper] failed to move', entry.name, ':', e.message);
+          }
+        }
+      } catch (e) {
+        console.warn('[reaper] scan failed:', e.message);
+      }
+    };
+
+    // Reap stale claims on startup, then start polling
+    setTimeout(async () => {
+      try { await reapStaleClaims(); } catch (_) {}
+      pollTimer = setInterval(pollTick, pollIntervalMs);
+      pollTick().catch(() => {});
+    }, 1000);
 
     return {
       stop: () => {

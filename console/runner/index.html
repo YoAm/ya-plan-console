@@ -107,7 +107,7 @@
   <header>
     <h1>ya-plan runner</h1>
     <div>
-      <div class="v" id="version">v1.6 · phase UI</div>
+      <div class="v" id="version">v1.7 · reaper + prewarm</div>
       <div class="v" id="workerIdDisplay">…</div>
       <div class="v" id="pyodideState"></div>
     </div>
@@ -141,6 +141,20 @@
     <div class="small" style="margin-top:6px">
       Polls spawn-queue every 60s. Keeps tab open = worker alive.
       Mobile browsers may throttle background tabs — keep this tab foreground for best response time.
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Pyodide <span class="small" style="font-weight:normal">(compute engine)</span></h2>
+    <div class="row">
+      <span class="small" id="pyodideInlineStatus">…</span>
+    </div>
+    <div class="row">
+      <button id="pyodidePrewarmBtn">⚡ Pre-warm Pyodide (~10MB)</button>
+    </div>
+    <div class="small" style="margin-top:6px">
+      Pyodide loads automatically when a compute job runs.
+      Pre-warming avoids the wait on the first job.
     </div>
   </div>
 

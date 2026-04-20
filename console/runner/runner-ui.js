@@ -223,22 +223,31 @@
 
   function renderPyodideState() {
     const el = $('pyodideState');
-    if (!el) return;
+    const inlineEl = $('pyodideInlineStatus');
+    if (!el && !inlineEl) return;
     if (!window.pyodideLoader) {
       el.textContent = '';
       return;
     }
     const s = window.pyodideLoader.status();
-    if (s.loaded && s.packages.length > 0) {
-      el.textContent = `pyodide ${s.version} · ${s.packages.join(',')}`;
-    } else if (s.loaded) {
-      el.textContent = `pyodide ${s.version} ready`;
+    let label, cls, prewarmDisabled;
+    if (s.ready && s.packages.length > 0) {
+      label = `✓ pyodide ${s.version} · ${s.packages.join(',')}`;
+      cls = 'ok'; prewarmDisabled = true;
+    } else if (s.ready) {
+      label = `✓ pyodide ${s.version} ready`;
+      cls = 'ok'; prewarmDisabled = true;
     } else if (s.initialized) {
-      el.textContent = 'pyodide loading…';
+      label = 'pyodide loading (10MB download)…';
+      cls = 'warn'; prewarmDisabled = true;
     } else {
-      el.textContent = 'pyodide not loaded';
+      label = `pyodide idle (loads on first job · ${s.version})`;
+      cls = 'small'; prewarmDisabled = false;
     }
-    el.className = 'small';
+    if (el) { el.textContent = label; el.className = cls; }
+    if (inlineEl) { inlineEl.textContent = label; inlineEl.className = cls; }
+    const pwBtn = $('pyodidePrewarmBtn');
+    if (pwBtn) pwBtn.disabled = prewarmDisabled;
   }
 
   function renderWorkerState() {
@@ -468,6 +477,24 @@
     $('refreshQueueBtn').addEventListener('click', renderPendingQueue);
     const wakeLockBtn = $('wakeLockToggleBtn');
     if (wakeLockBtn) wakeLockBtn.addEventListener('click', toggleWakeLock);
+
+    const prewarmBtn = $('pyodidePrewarmBtn');
+    if (prewarmBtn) prewarmBtn.addEventListener('click', async () => {
+      prewarmBtn.disabled = true;
+      prewarmBtn.textContent = 'loading…';
+      try {
+        await window.pyodideLoader.ensurePyodide({
+          onProgress: (stage) => {
+            prewarmBtn.textContent = `loading: ${stage}`;
+          },
+        });
+        prewarmBtn.textContent = '✓ loaded';
+      } catch (e) {
+        prewarmBtn.textContent = `✗ ${e.message.slice(0, 30)}`;
+        prewarmBtn.disabled = false;
+      }
+      renderPyodideState();
+    });
 
     const hardReloadBtn = $('hardReloadBtn');
     if (hardReloadBtn) hardReloadBtn.addEventListener('click', async () => {

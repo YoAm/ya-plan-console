@@ -10,6 +10,7 @@
 
   let loadPromise = null;
   let loadedPackages = new Set();
+  let isReady = false;  // true once loadPromise has resolved
 
   // Ensures Pyodide is loaded and returns the singleton instance.
   // First call triggers CDN fetch + WASM initialization (~10MB, ~10-30s cold).
@@ -53,6 +54,7 @@
         }
 
         onProgress?.('ready', { init_ms: Date.now() - initStart });
+        isReady = true;
         return pyodide;
       })();
     }
@@ -87,8 +89,10 @@
   function status() {
     return {
       version: PYODIDE_VERSION,
+      // true once ensurePyodide has been called (load-in-progress or ready)
       initialized: !!loadPromise,
-      loaded: loadPromise !== null,
+      // true ONLY when loadPyodide has resolved (Pyodide ready to run)
+      ready: isReady,
       packages: [...loadedPackages],
     };
   }
