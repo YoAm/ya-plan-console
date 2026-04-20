@@ -19,7 +19,87 @@
     stageStartMs: null,    // when current stage started
     lastHeartbeatMs: null, // last time any progress callback fired
     lastHeartbeatElapsed: 0, // s elapsed at last heartbeat (for display)
+    // Download tracking (via fetch interceptor, pyodide discussion #2927)
+    download: {
+      url: null,            // currently-downloading file URL
+      bytesLoaded: 0,       // bytes received so far
+      bytesTotal: 0,        // Content-Length (0 if unknown e.g. gzip)
+      lastBytes: 0,         // bytes at last sample
+      lastSampleMs: 0,      // ms of last sample
+      bytesPerSec: 0,       // current transfer rate
+      filesCompleted: 0,    // count of files fully streamed
+      fromCache: false,     // true if response came from SW cache (very fast)
+    },
   };
+
+  // Fetch interceptor: monkey-patches global fetch to stream byte progress
+  // for Pyodide CDN files. No native progress API exists for loadPyodide
+  // (see pyodide discussion #2927); this is the canonical workaround.
+  // Only intercepts cdn.jsdelivr.net; everything else passes through.
+  let originalFetch = null;
+  function installFetchInterceptor() {
+    if (originalFetch) return;
+    originalFetch = globalThis.fetch.bind(globalThis);
+    globalThis.fetch = async (input, init) => {
+      const url = typeof input === 'string' ? input : (input && input.url) || '';
+      if (!url.includes('cdn.jsdelivr.net/pyodide')) {
+        return originalFetch(input, init);
+      }
+      const startMs = Date.now();
+      const response = await originalFetch(input, init);
+      if (!response.body) return response;
+
+      // Reset download state for this file
+      progress.download.url = url;
+      progress.download.bytesLoaded = 0;
+      progress.download.bytesTotal = parseInt(response.headers.get('Content-Length') || '0', 10);
+      progress.download.lastBytes = 0;
+      progress.download.lastSampleMs = Date.now();
+      progress.download.bytesPerSec = 0;
+      progress.download.fromCache = false;  // reset; will detect on flush
+
+      // Detect SW-cache hit heuristically: response resolves in <50ms AND
+      // Content-Length is present. Cache reads skip the network roundtrip.
+      const respArrivalMs = Date.now() - startMs;
+      const likelyCached = respArrivalMs < 50 && progress.download.bytesTotal > 0;
+
+      const ts = new TransformStream({
+        transform(chunk, ctrl) {
+          progress.download.bytesLoaded += chunk.byteLength;
+          const now = Date.now();
+          const dt = now - progress.download.lastSampleMs;
+          if (dt >= 300) {
+            const db = progress.download.bytesLoaded - progress.download.lastBytes;
+            progress.download.bytesPerSec = Math.round(db * 1000 / dt);
+            progress.download.lastBytes = progress.download.bytesLoaded;
+            progress.download.lastSampleMs = now;
+          }
+          progress.lastHeartbeatMs = now;
+          ctrl.enqueue(chunk);
+        },
+        flush() {
+          progress.download.filesCompleted += 1;
+          // Total elapsed for whole transfer — if very fast relative to size,
+          // it was a cache hit
+          const totalElapsed = Date.now() - startMs;
+          progress.download.fromCache = likelyCached || (
+            progress.download.bytesLoaded > 1_000_000 && totalElapsed < 200
+          );
+        },
+      });
+      return new Response(response.body.pipeThrough(ts), {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
+    };
+  }
+  function uninstallFetchInterceptor() {
+    if (originalFetch) {
+      globalThis.fetch = originalFetch;
+      originalFetch = null;
+    }
+  }
 
   function recordProgress(stage, detail) {
     progress.stage = stage;
@@ -47,6 +127,9 @@
       progress.stage = 'starting';
       progress.stageStartMs = Date.now();
       progress.lastHeartbeatMs = Date.now();
+
+      // Install fetch interceptor so we see byte-level progress for CDN files
+      installFetchInterceptor();
 
       // Wrap onProgress to also record local progress
       const recordAndEmit = (stage, detail) => {
@@ -102,8 +185,10 @@
 
         recordAndEmit('ready', { init_ms: Date.now() - initStart });
         isReady = true;
+        uninstallFetchInterceptor();
         return pyodide;
       })();
+      loadPromise.catch(() => { uninstallFetchInterceptor(); });
     }
 
     const pyodide = await loadPromise;
@@ -149,6 +234,7 @@
         stageElapsedMs: progress.stageStartMs ? (now - progress.stageStartMs) : 0,
         sinceHeartbeatMs: progress.lastHeartbeatMs ? (now - progress.lastHeartbeatMs) : 0,
         lastHeartbeatElapsed: progress.lastHeartbeatElapsed,
+        download: { ...progress.download },
       },
     };
   }

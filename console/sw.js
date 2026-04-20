@@ -32,7 +32,9 @@ self.addEventListener('activate', (e) => {
   e.waitUntil((async () => {
     // Purge old caches
     const keys = await caches.keys();
-    await Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)));
+    await Promise.all(keys
+      .filter(k => k !== CACHE && k !== PYODIDE_CACHE)
+      .map(k => caches.delete(k)));
     // Claim all tabs so the new SW controls them
     await self.clients.claim();
     // Tell every open tab there's an update — they can reload
@@ -43,10 +45,32 @@ self.addEventListener('activate', (e) => {
   })());
 });
 
+// Separate cache for pyodide CDN files. Version-pinned URLs are immutable;
+// old entries become dead automatically when we bump PYODIDE_VERSION.
+// Persist across SW version bumps (10MB redownload would hurt).
+const PYODIDE_CACHE = 'yp-pyodide-v1';
+
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   // Never cache GitHub API — always hit the network
   if (url.hostname === 'api.github.com') return;
+
+  // Pyodide CDN: cache-first, persistent. First load caches ~10MB; every
+  // subsequent load reads from cache (instant + works offline).
+  if (url.hostname === 'cdn.jsdelivr.net' && url.pathname.includes('/pyodide/')) {
+    e.respondWith(
+      caches.open(PYODIDE_CACHE).then(async (cache) => {
+        const cached = await cache.match(e.request);
+        if (cached) return cached;
+        const resp = await fetch(e.request);
+        if (resp && resp.ok) {
+          cache.put(e.request, resp.clone()).catch(() => {});
+        }
+        return resp;
+      })
+    );
+    return;
+  }
 
   // For HTML and JS: network-first, cache fallback.
   // Rationale: cache-first means users can get stuck on stale JS after

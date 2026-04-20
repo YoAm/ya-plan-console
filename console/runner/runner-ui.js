@@ -235,33 +235,122 @@
 
   // ═══ Render ══════════════════════════════════════════════════════════
 
+  const PYODIDE_STAGE_LABELS = {
+    starting: 'starting…',
+    fetching_script: 'downloading pyodide.js',
+    script_loaded: 'script loaded',
+    initializing: 'initializing WASM runtime…',
+    initializing_heartbeat: 'initializing WASM runtime…',
+    loading_packages: 'loading packages…',
+    packages_loaded: 'packages ready',
+    ready: 'ready',
+  };
+
+  function formatElapsed(ms) {
+    const s = Math.floor(ms / 1000);
+    if (s < 60) return `${s}s`;
+    return `${Math.floor(s / 60)}m ${s % 60}s`;
+  }
+
   function renderPyodideState() {
-    const el = $('pyodideState');
-    const inlineEl = $('pyodideInlineStatus');
-    if (!el && !inlineEl) return;
-    if (!window.pyodideLoader) {
-      el.textContent = '';
-      return;
-    }
+    if (!window.pyodideLoader) return;
     const s = window.pyodideLoader.status();
-    let label, cls, prewarmDisabled;
-    if (s.ready && s.packages.length > 0) {
-      label = `✓ pyodide ${s.version} · ${s.packages.join(',')}`;
-      cls = 'ok'; prewarmDisabled = true;
-    } else if (s.ready) {
-      label = `✓ pyodide ${s.version} ready`;
-      cls = 'ok'; prewarmDisabled = true;
-    } else if (s.initialized) {
-      label = 'pyodide loading (10MB download)…';
-      cls = 'warn'; prewarmDisabled = true;
-    } else {
-      label = `pyodide idle (loads on first job · ${s.version})`;
-      cls = 'small'; prewarmDisabled = false;
+
+    const idleBlock = $('pyodideIdleBlock');
+    const loadingBlock = $('pyodideLoadingBlock');
+    const inlineEl = $('pyodideInlineStatus');
+    const stageLabel = $('pyodideStageLabel');
+    const elapsedLabel = $('pyodideElapsed');
+    const bar = $('pyodideProgressBar');
+    const warningEl = $('pyodideWarning');
+
+    const isLoading = s.initialized && !s.ready;
+    const isReady = s.ready;
+    const isIdle = !s.initialized;
+
+    // Toggle card blocks — when loading, hide idle pane and show progress pane
+    if (idleBlock) idleBlock.style.display = isLoading ? 'none' : '';
+    if (loadingBlock) loadingBlock.style.display = isLoading ? '' : 'none';
+
+    // Inline label (idle + ready states)
+    if (inlineEl) {
+      if (isReady && s.packages.length > 0) {
+        inlineEl.textContent = `✓ pyodide ${s.version} · ${s.packages.join(',')}`;
+        inlineEl.className = 'ok';
+      } else if (isReady) {
+        inlineEl.textContent = `✓ pyodide ${s.version} ready`;
+        inlineEl.className = 'ok';
+      } else if (isIdle) {
+        inlineEl.textContent = `pyodide idle (loads on first job · ${s.version})`;
+        inlineEl.className = 'small';
+      }
     }
-    if (el) { el.textContent = label; el.className = cls; }
-    if (inlineEl) { inlineEl.textContent = label; inlineEl.className = cls; }
+
+    // Prewarm button — only usable when idle
     const pwBtn = $('pyodidePrewarmBtn');
-    if (pwBtn) pwBtn.disabled = prewarmDisabled;
+    if (pwBtn) pwBtn.disabled = !isIdle;
+
+    // Loading pane — animate with download progress, elapsed, warnings
+    if (isLoading) {
+      const stage = s.progress.stage;
+      const humanStage = PYODIDE_STAGE_LABELS[stage] || stage || 'loading…';
+      const dl = s.progress.download || {};
+
+      if (stageLabel) {
+        if (dl.bytesLoaded > 0 && dl.url) {
+          const filename = dl.url.split('/').pop() || 'pyodide.asm.wasm';
+          const loadedMB = (dl.bytesLoaded / 1024 / 1024).toFixed(1);
+          const speedKB = dl.bytesPerSec > 0 ? (dl.bytesPerSec / 1024).toFixed(0) : '—';
+          if (dl.fromCache && dl.filesCompleted > 0) {
+            stageLabel.textContent = `⚡ ${filename} from cache (${loadedMB} MB)`;
+          } else if (dl.bytesTotal > 0) {
+            const totalMB = (dl.bytesTotal / 1024 / 1024).toFixed(1);
+            const pct = Math.round(dl.bytesLoaded / dl.bytesTotal * 100);
+            stageLabel.textContent = `${filename} · ${loadedMB}/${totalMB} MB (${pct}%) @ ${speedKB} KB/s`;
+          } else {
+            stageLabel.textContent = `${filename} · ${loadedMB} MB @ ${speedKB} KB/s`;
+          }
+        } else if (stage === 'initializing_heartbeat') {
+          stageLabel.textContent = `initializing WASM runtime (${s.progress.lastHeartbeatElapsed}s)…`;
+        } else {
+          stageLabel.textContent = humanStage;
+        }
+      }
+
+      if (elapsedLabel) {
+        elapsedLabel.textContent = formatElapsed(s.progress.elapsedMs);
+      }
+
+      // Determinate bar when we have Content-Length, else shimmer
+      if (bar) {
+        if (dl.bytesTotal > 0 && dl.bytesLoaded > 0 && !isReady) {
+          const pct = Math.min(100, Math.round(dl.bytesLoaded / dl.bytesTotal * 100));
+          bar.style.width = pct + '%';
+          bar.style.animation = 'none';
+        } else {
+          bar.style.width = '100%';
+          bar.style.animation = '';  // let CSS shimmer run
+        }
+      }
+
+      // Warnings
+      if (warningEl) {
+        const elapsedS = Math.floor(s.progress.elapsedMs / 1000);
+        const sinceHeartbeatS = Math.floor(s.progress.sinceHeartbeatMs / 1000);
+        if (elapsedS > 120) {
+          warningEl.textContent = `⚠ taking unusually long (${elapsedS}s). Check connection or try Force Reload.`;
+          warningEl.style.display = '';
+        } else if (elapsedS > 60) {
+          warningEl.textContent = `⚠ slower than typical (${elapsedS}s). First load + mobile data can be this slow.`;
+          warningEl.style.display = '';
+        } else if (sinceHeartbeatS > 30 && stage && stage !== 'fetching_script') {
+          warningEl.textContent = `⚠ no progress for ${sinceHeartbeatS}s. Worker may be stuck — try Force Reload.`;
+          warningEl.style.display = '';
+        } else {
+          warningEl.style.display = 'none';
+        }
+      }
+    }
   }
 
   function renderWorkerState() {
