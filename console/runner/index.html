@@ -6,7 +6,7 @@
 <!-- CSP: extends console's policy with api.anthropic.com for dispatch. -->
 <meta http-equiv="Content-Security-Policy" content="
   default-src 'none';
-  script-src 'self' https://cdn.jsdelivr.net;
+  script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net;
   style-src 'self' 'unsafe-inline';
   img-src 'self' data:;
   connect-src https://api.github.com https://api.anthropic.com https://cdn.jsdelivr.net;
@@ -260,6 +260,15 @@
     <div class="row" style="margin-top:8px">
       <button id="hardReloadBtn">⟳ Force reload (clear cache)</button>
     </div>
+  </div>
+
+  <div class="card" id="healthCard">
+    <h2>Health check <span class="small" style="font-weight:normal">(browser capabilities)</span></h2>
+    <div class="row">
+      <button id="healthCheckBtn">Run checks</button>
+      <span class="small" id="healthSummary" style="flex:1">tap to run preflight</span>
+    </div>
+    <div id="healthResults" style="display:none; margin-top:8px; font: 11px ui-monospace, monospace;"></div>
   </div>
 
   <div class="card">
